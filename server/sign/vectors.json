@@ -1,89 +1,125 @@
 {
- "generatedBy": "ref signPlayer + app-source pythonUrlEncode (2026-11-16)",
- "cases": [
-  {
-   "epId": "7706514645208534041",
-   "identity": {
-    "device_id": "445781862006058",
-    "iid": "445781861485882",
-    "cdid": "3f2b9c1e-7d4a-4f3e-9a11-8b2c5d6e7f01"
-   },
-   "legacy": false,
-   "ticket": 1763380000123,
-   "randField": 123456789,
-   "ladonRandom": "00112233",
-   "query": "ac=wifi&channel=update_64&aid=8662&app_name=novelread&version_code=73932&version_name=7.3.9.32&device_platform=android&os=android&ssmix=a&device_type=25053RT47C&device_brand=Redmi&language=zh&os_api=36&os_version=16&manifest_version_code=73932&resolution=1280*2772&dpi=520&update_version_code=73932&host_abi=arm64-v8a&dragon_device_type=phone&pv_player=73932&compliance_status=0&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0&device_id=445781862006058&iid=445781861485882&cdid=3f2b9c1e-7d4a-4f3e-9a11-8b2c5d6e7f01&video_id=7706514645208534041&video_id_type=0&device_level=1&need_all_video_definition=1&need_mp4_align=0&use_os_player=0&video_platform=1024&source=0&from_video_id=&ts=1763380000&_rticket=1763380000123",
-   "bodyHash": "",
-   "sig": {
-    "x-ss-req-ticket": "1763380000000",
-    "x-khronos": "1763380000",
-    "x-ladon": "ABEiM+HB8nFVLc01tQPC7nbWhrfLACheK7M4Yd4m4Z9kZO1O",
-    "x-argus": "8oHu8LnZm0OtJJIaSr1427D+yeH70h5aZTVjoSW7MfFi/hk1LhjTqsEEWYpwcHfK4/01emc1jQRzIHaTfzeFfagHdeP9RBljzlfbY4w0ydH+HVvvKbL+PadxqqjjA1gZ3urXmcs4Tui0a7XBXutu8PuuNLYdTZNsnBnpO71WR/6YVzCrjMM1a/J21BOCMHZiR4/uq2IBOnKRX7pRx2BdNpf0nyl9PjOSwaIGl5QgY54IO7nnfGCR8NEAtiWTO1TR37bKQfU0bRamkfbvVkBBzViT",
-    "x-ss-stub": ""
-   }
-  },
-  {
-   "epId": "7706514668054907929",
-   "identity": {
-    "device_id": "3761299510431221",
-    "iid": "3761299486312266",
-    "cdid": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
-   },
-   "legacy": false,
-   "ticket": 1763380123456,
-   "randField": -987654321,
-   "ladonRandom": "deadbeef",
-   "query": "ac=wifi&channel=update_64&aid=8662&app_name=novelread&version_code=73932&version_name=7.3.9.32&device_platform=android&os=android&ssmix=a&device_type=25053RT47C&device_brand=Redmi&language=zh&os_api=36&os_version=16&manifest_version_code=73932&resolution=1280*2772&dpi=520&update_version_code=73932&host_abi=arm64-v8a&dragon_device_type=phone&pv_player=73932&compliance_status=0&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0&device_id=3761299510431221&iid=3761299486312266&cdid=a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d&video_id=7706514668054907929&video_id_type=0&device_level=1&need_all_video_definition=1&need_mp4_align=0&use_os_player=0&video_platform=1024&source=0&from_video_id=&ts=1763380123&_rticket=1763380123456",
-   "bodyHash": "",
-   "sig": {
-    "x-ss-req-ticket": "1763380123000",
-    "x-khronos": "1763380123",
-    "x-ladon": "3q2+74RWqM5Nzju89IGJGBrDj+GH4jru4kjEJTiDlSiIsqER",
-    "x-argus": "8oHAH26Sbp9WBxIQWA8MN9eox+aFcBalk7RNICCaGHil3RQ08294iTPr033RHVuDHBWsTwqMA7ORPC3a43t0LqiZPtCBDeHrOFpVu37WSFT4U72NV0QRs0l2xMttV/XocymrhyhmMKJVTVJubQMXlQgqKk+02mLEzb28O3pIsmh2HwtQ02Ijn3pafln1xxoSzDuK6APTjI+54D5jm8Y9rU2wCvENcZ9EweHx1zNHGUbxbWrLEX24fyopceEiIJkthVnYaYHMxQlWzhU755Rw0ng+",
-    "x-ss-stub": ""
-   }
-  },
-  {
-   "epId": "7706514645208534041",
-   "identity": {
-    "device_id": "445781862006058",
-    "iid": "445781861485882",
-    "cdid": "3f2b9c1e-7d4a-4f3e-9a11-8b2c5d6e7f01"
-   },
-   "legacy": true,
-   "ticket": 1763380000123,
-   "randField": 55555,
-   "ladonRandom": "cafebabe",
-   "query": "ac=wifi&channel=update_64&aid=8662&app_name=novelread&version_code=74332&version_name=7.4.3.32&device_platform=android&os=android&ssmix=a&device_type=25053RT47C&device_brand=Redmi&language=zh&os_api=36&os_version=16&manifest_version_code=74332&resolution=1280*2772&dpi=520&update_version_code=74332&host_abi=arm64-v8a&dragon_device_type=phone&pv_player=74332&compliance_status=0&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0&device_id=445781862006058&iid=445781861485882&cdid=3f2b9c1e-7d4a-4f3e-9a11-8b2c5d6e7f01&ts=1763380000&_rticket=1763380000123",
-   "bodyHash": "ba797387bc8aa80d6c925e91aed73c40",
-   "sig": {
-    "x-ss-req-ticket": "1763380000000",
-    "x-khronos": "1763380000",
-    "x-ladon": "yv66vtJxFuEDB3BbP84WaF2AsyvheiL5NMv3Q0s1Fzu5p4G3",
-    "x-argus": "8oGtly/q30zomF9jsMsfO3JH1WF7TLiPqtHvN1FuiHsrhc+PdIrYefXosEK6ZZjO/HBQ/zHyXI2Tj+t7s6NspaLz9ztS5okDpOBx6hS7IahhJAPOp+3n0BjJhtwFY5JwI9VNBVmesc26jdTfz2yu5KE+WdQ28n450wsexRr2IOxYfbjStFSj6ClHjMTxx18XpVPN+XHRh03x5WVZ5j+bH4TXWPFQvmRcLmXs/gk7hSTh1EK61lqLmQz4NDwMCku1FPFFfpS93u1NijKn/6ggz1Gp",
-    "x-ss-stub": "ba797387bc8aa80d6c925e91aed73c40"
-   }
-  },
-  {
-   "epId": "7600000000000000001",
-   "identity": {
-    "device_id": "3761299510431221",
-    "iid": "3761299486312266",
-    "cdid": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
-   },
-   "legacy": true,
-   "ticket": 1763399999999,
-   "randField": 2147483647,
-   "ladonRandom": "0f0e0d0c",
-   "query": "ac=wifi&channel=update_64&aid=8662&app_name=novelread&version_code=74332&version_name=7.4.3.32&device_platform=android&os=android&ssmix=a&device_type=25053RT47C&device_brand=Redmi&language=zh&os_api=36&os_version=16&manifest_version_code=74332&resolution=1280*2772&dpi=520&update_version_code=74332&host_abi=arm64-v8a&dragon_device_type=phone&pv_player=74332&compliance_status=0&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0&device_id=3761299510431221&iid=3761299486312266&cdid=a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d&ts=1763399999&_rticket=1763399999999",
-   "bodyHash": "585450a71fe945f3a9d3019ca21ef50e",
-   "sig": {
-    "x-ss-req-ticket": "1763399999000",
-    "x-khronos": "1763399999",
-    "x-ladon": "Dw4NDMCeE+Nn+8MnOQQJ4KQtsejXzV9dAQx4ev7uHyGsIkYk",
-    "x-argus": "8oHAH26Sbp9WBxIQWA8MN9eox+aFcBalk7RNICCaGHil3RQ08294iTPr033RHVuDHBUjkrmS20LADTShnbqzQ6D+giFvWlLbeQoU0rEGjPkfr/NcF2/xL8QJ4PCVTwD4iQSS9hxMnPY13R09lCK9zIO20wz88t+0yWRtqo5uvh98MlJRTvI4W/9258Wl5iTjtlIxipzhS3dx8wgNnx3He3v4TCNp7oumgm2aa5pW5G2BjJ+8jSdayb/sh33mjNs3MJtrPVpRoRIA5ILEsgm9rED4",
-    "x-ss-stub": "585450a71fe945f3a9d3019ca21ef50e"
-   }
-  }
- ]
+  "generatedBy": "ref signPlayer + app-source pythonUrlEncode (2026-11-16)",
+  "cases": [
+    {
+      "epId": "7706514645208534041",
+      "identity": {
+        "device_id": "445781862006058",
+        "iid": "445781861485882",
+        "cdid": "3f2b9c1e-7d4a-4f3e-9a11-8b2c5d6e7f01"
+      },
+      "legacy": false,
+      "ticket": 1763380000123,
+      "randField": 123456789,
+      "ladonRandom": "00112233",
+      "query": "ac=wifi&channel=update_64&aid=8662&app_name=novelread&version_code=73932&version_name=7.3.9.32&device_platform=android&os=android&ssmix=a&device_type=25053RT47C&device_brand=Redmi&language=zh&os_api=36&os_version=16&manifest_version_code=73932&resolution=1280*2772&dpi=520&update_version_code=73932&host_abi=arm64-v8a&dragon_device_type=phone&pv_player=73932&compliance_status=0&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0&device_id=445781862006058&iid=445781861485882&cdid=3f2b9c1e-7d4a-4f3e-9a11-8b2c5d6e7f01&video_id=7706514645208534041&video_id_type=0&device_level=1&need_all_video_definition=1&need_mp4_align=0&use_os_player=0&video_platform=1024&source=0&from_video_id=&ts=1763380000&_rticket=1763380000123",
+      "bodyHash": "",
+      "sig": {
+        "x-ss-req-ticket": "1763380000000",
+        "x-khronos": "1763380000",
+        "x-ladon": "ABEiM+HB8nFVLc01tQPC7nbWhrfLACheK7M4Yd4m4Z9kZO1O",
+        "x-argus": "8oHu8LnZm0OtJJIaSr1427D+yeH70h5aZTVjoSW7MfFi/hk1LhjTqsEEWYpwcHfK4/01emc1jQRzIHaTfzeFfagHdeP9RBljzlfbY4w0ydH+HVvvKbL+PadxqqjjA1gZ3urXmcs4Tui0a7XBXutu8PuuNLYdTZNsnBnpO71WR/6YVzCrjMM1a/J21BOCMHZiR4/uq2IBOnKRX7pRx2BdNpf0nyl9PjOSwaIGl5QgY54IO7nnfGCR8NEAtiWTO1TR37bKQfU0bRamkfbvVkBBzViT",
+        "x-ss-stub": ""
+      }
+    },
+    {
+      "epId": "7706514668054907929",
+      "identity": {
+        "device_id": "3761299510431221",
+        "iid": "3761299486312266",
+        "cdid": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "legacy": false,
+      "ticket": 1763380123456,
+      "randField": -987654321,
+      "ladonRandom": "deadbeef",
+      "query": "ac=wifi&channel=update_64&aid=8662&app_name=novelread&version_code=73932&version_name=7.3.9.32&device_platform=android&os=android&ssmix=a&device_type=25053RT47C&device_brand=Redmi&language=zh&os_api=36&os_version=16&manifest_version_code=73932&resolution=1280*2772&dpi=520&update_version_code=73932&host_abi=arm64-v8a&dragon_device_type=phone&pv_player=73932&compliance_status=0&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0&device_id=3761299510431221&iid=3761299486312266&cdid=a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d&video_id=7706514668054907929&video_id_type=0&device_level=1&need_all_video_definition=1&need_mp4_align=0&use_os_player=0&video_platform=1024&source=0&from_video_id=&ts=1763380123&_rticket=1763380123456",
+      "bodyHash": "",
+      "sig": {
+        "x-ss-req-ticket": "1763380123000",
+        "x-khronos": "1763380123",
+        "x-ladon": "3q2+74RWqM5Nzju89IGJGBrDj+GH4jru4kjEJTiDlSiIsqER",
+        "x-argus": "8oHAH26Sbp9WBxIQWA8MN9eox+aFcBalk7RNICCaGHil3RQ08294iTPr033RHVuDHBWsTwqMA7ORPC3a43t0LqiZPtCBDeHrOFpVu37WSFT4U72NV0QRs0l2xMttV/XocymrhyhmMKJVTVJubQMXlQgqKk+02mLEzb28O3pIsmh2HwtQ02Ijn3pafln1xxoSzDuK6APTjI+54D5jm8Y9rU2wCvENcZ9EweHx1zNHGUbxbWrLEX24fyopceEiIJkthVnYaYHMxQlWzhU755Rw0ng+",
+        "x-ss-stub": ""
+      }
+    },
+    {
+      "epId": "7706514645208534041",
+      "identity": {
+        "device_id": "445781862006058",
+        "iid": "445781861485882",
+        "cdid": "3f2b9c1e-7d4a-4f3e-9a11-8b2c5d6e7f01"
+      },
+      "legacy": true,
+      "ticket": 1763380000123,
+      "randField": 55555,
+      "ladonRandom": "cafebabe",
+      "query": "ac=wifi&channel=update_64&aid=8662&app_name=novelread&version_code=74332&version_name=7.4.3.32&device_platform=android&os=android&ssmix=a&device_type=25053RT47C&device_brand=Redmi&language=zh&os_api=36&os_version=16&manifest_version_code=74332&resolution=1280*2772&dpi=520&update_version_code=74332&host_abi=arm64-v8a&dragon_device_type=phone&pv_player=74332&compliance_status=0&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0&device_id=445781862006058&iid=445781861485882&cdid=3f2b9c1e-7d4a-4f3e-9a11-8b2c5d6e7f01&ts=1763380000&_rticket=1763380000123",
+      "bodyHash": "ba797387bc8aa80d6c925e91aed73c40",
+      "sig": {
+        "x-ss-req-ticket": "1763380000000",
+        "x-khronos": "1763380000",
+        "x-ladon": "yv66vtJxFuEDB3BbP84WaF2AsyvheiL5NMv3Q0s1Fzu5p4G3",
+        "x-argus": "8oGtly/q30zomF9jsMsfO3JH1WF7TLiPqtHvN1FuiHsrhc+PdIrYefXosEK6ZZjO/HBQ/zHyXI2Tj+t7s6NspaLz9ztS5okDpOBx6hS7IahhJAPOp+3n0BjJhtwFY5JwI9VNBVmesc26jdTfz2yu5KE+WdQ28n450wsexRr2IOxYfbjStFSj6ClHjMTxx18XpVPN+XHRh03x5WVZ5j+bH4TXWPFQvmRcLmXs/gk7hSTh1EK61lqLmQz4NDwMCku1FPFFfpS93u1NijKn/6ggz1Gp",
+        "x-ss-stub": "ba797387bc8aa80d6c925e91aed73c40"
+      },
+      "payload": {
+        "biz_param": {
+          "detail_page_version": 0,
+          "device_level": 3,
+          "disable_digg_stat": false,
+          "need_all_video_definition": true,
+          "need_mp4_align": false,
+          "use_os_player": false,
+          "use_server_dns": false,
+          "video_platform": 1024
+        },
+        "mixed_video_id_map": {
+          "1004": [
+            "7706514645208534041"
+          ]
+        }
+      },
+      "note": "gzip 字节随 zlib 版本不同（CI vs 本地），bodyHash 仅作参考；断言改为解压后语义比对"
+    },
+    {
+      "epId": "7600000000000000001",
+      "identity": {
+        "device_id": "3761299510431221",
+        "iid": "3761299486312266",
+        "cdid": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "legacy": true,
+      "ticket": 1763399999999,
+      "randField": 2147483647,
+      "ladonRandom": "0f0e0d0c",
+      "query": "ac=wifi&channel=update_64&aid=8662&app_name=novelread&version_code=74332&version_name=7.4.3.32&device_platform=android&os=android&ssmix=a&device_type=25053RT47C&device_brand=Redmi&language=zh&os_api=36&os_version=16&manifest_version_code=74332&resolution=1280*2772&dpi=520&update_version_code=74332&host_abi=arm64-v8a&dragon_device_type=phone&pv_player=74332&compliance_status=0&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0&device_id=3761299510431221&iid=3761299486312266&cdid=a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d&ts=1763399999&_rticket=1763399999999",
+      "bodyHash": "585450a71fe945f3a9d3019ca21ef50e",
+      "sig": {
+        "x-ss-req-ticket": "1763399999000",
+        "x-khronos": "1763399999",
+        "x-ladon": "Dw4NDMCeE+Nn+8MnOQQJ4KQtsejXzV9dAQx4ev7uHyGsIkYk",
+        "x-argus": "8oHAH26Sbp9WBxIQWA8MN9eox+aFcBalk7RNICCaGHil3RQ08294iTPr033RHVuDHBUjkrmS20LADTShnbqzQ6D+giFvWlLbeQoU0rEGjPkfr/NcF2/xL8QJ4PCVTwD4iQSS9hxMnPY13R09lCK9zIO20wz88t+0yWRtqo5uvh98MlJRTvI4W/9258Wl5iTjtlIxipzhS3dx8wgNnx3He3v4TCNp7oumgm2aa5pW5G2BjJ+8jSdayb/sh33mjNs3MJtrPVpRoRIA5ILEsgm9rED4",
+        "x-ss-stub": "585450a71fe945f3a9d3019ca21ef50e"
+      },
+      "payload": {
+        "biz_param": {
+          "detail_page_version": 0,
+          "device_level": 3,
+          "disable_digg_stat": false,
+          "need_all_video_definition": true,
+          "need_mp4_align": false,
+          "use_os_player": false,
+          "use_server_dns": false,
+          "video_platform": 1024
+        },
+        "mixed_video_id_map": {
+          "1004": [
+            "7600000000000000001"
+          ]
+        }
+      },
+      "note": "gzip 字节随 zlib 版本不同（CI vs 本地），bodyHash 仅作参考；断言改为解压后语义比对"
+    }
+  ]
 }
