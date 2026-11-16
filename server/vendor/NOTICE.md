@@ -18,3 +18,8 @@ The service adapter and HTTP layer are original project code.
 
 The Android/tvOS project skeleton is derived from
 @react-native-tvos/template-tv 0.81.0-0 (MIT); see LICENSE.template-tv.
+
+2026-11-16: `registerPlaybackDevice` now also returns the `cdid` it generated in the
+registration payload (3-line change in `registerPayload` and its caller), so the content
+service can sign `video_tab` / `multi_video_model` requests with the same `cdid` the device
+was registered with (required by the upstream signature check). No other behaviour changed.

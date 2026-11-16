@@ -1,63 +1,32 @@
 import path from "node:path";
 import axios from "axios";
+import { gzipSync } from "node:zlib";
+import { randomBytes, createHash } from "node:crypto";
+import argus from "./sign/argus.cjs";
 import { fileURLToPath } from "node:url";
 import { createDeviceStore } from "./device.mjs";
 
-// 红果（番茄小说 App，aid=8662）官方播放模型接口。
+// 红果（番茄小说 App，aid=8662）官方播放取址。
 //
-// 2026-11 上游变化（实测，别再改回带签名的请求）：
-//   1) POST /novel/player/multi_video_model/v1/ 带全套签名头 → 200 + 0 字节；
-//   2) GET  /reading/bookapi/video_tab/multi_video_model/v1/ 带全套签名头 → 200 + 0 字节；
-//   3) 同一批接口去掉全部签名头、只带「平台注册的匿名设备身份」→ 曾返回完整模型（21KB，含多档片源）。
-// 即 sign/argus.cjs 生成的 x-argus/x-ladon 已不被上游接受，带上反而被判成伪造客户端，
-// 所以这里一律发「无签名 + 注册身份」的请求。
-// 代价是该通道对同一出口 IP 有很强的限流惩罚窗（连续取址稳定回 0 字节），
-// 因此策略是：每次取址只打一发，空响应后全局冷却，绝不重试轰炸。
-const MODEL_HOST = "https://api5-normal-sinfonlinea.fqnovel.com";
+// 2026-11-16 复核（对齐 jackotom/hongguo-drama 与 tsukiyo-zero/hongguoTV 的可用实现）：
+//   1) 取址必须带完整签名头（x-argus / x-ladon），且必须使用「平台匿名注册的一次性设备身份」；
+//      server/sign/argus.cjs 与参考实现的 x-argus / x-ladon 逐字节一致（20 组 GET/POST 用例）。
+//   2) 首选签名 GET /reading/bookapi/video_tab/multi_video_model/v1/；
+//      仅当返回空正文时才补发一次签名 POST /novel/player/multi_video_model/v1/（旧链路）。
+//   3) 同一设备身份第二次取址会被回 0 字节，所以每次取址重新注册（60 秒内复用，避免把注册接口打成风控）。
+//   4) 空正文 = 风控/限流：全局冷却，冷却期内直接回落 360P 兼容通道，绝不重试轰炸。
+// 紧急回退：HONGGUO_OFFICIAL_UNSIGNED=1 时改用旧的「无签名 + 注册身份」请求（仅在确认上游放开时使用）。
+const MODEL_HOST = "https://api5-normal-sinfonlineb.fqnovel.com";
 const MODEL_PATH = "/novel/player/multi_video_model/v1/";
-
-// video_tab 是 App 播放页真正使用的取址接口（2026-11-10 起 multi_video_model 全族被关）。
 const TAB_HOST = "https://api5-normal-sinfonlineb.fqnovel.com";
 const TAB_PATH = "/reading/bookapi/video_tab/multi_video_model/v1/";
 
 // 空响应后的全局冷却：这段时间内不再打上游，直接让调用方回落 360P 兼容通道。
 const EMPTY_COOLDOWN = 90 * 1000;
 
-const UA =
-  "com.phoenix.read/73932 (Linux; U; Android 14; zh_CN; 23127PN0CC; Build/UKQ1.230804.001; " +
-  "Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)";
-
-// 与实测成功请求完全一致的设备参数（改版本号可能触发风控，勿随意调整）。
-const DEVICE_PARAMS = {
-  ac: "wifi",
-  channel: "xiaomi_8662_64",
-  aid: "8662",
-  app_name: "novelread",
-  version_code: "73932",
-  version_name: "7.3.9.32",
-  device_platform: "android",
-  os: "android",
-  ssmix: "a",
-  device_type: "23127PN0CC",
-  device_brand: "Xiaomi",
-  language: "zh",
-  os_api: "34",
-  os_version: "14",
-  manifest_version_code: "73932",
-  resolution: "1200*2670",
-  dpi: "460",
-  update_version_code: "73932",
-  host_abi: "arm64-v8a",
-  dragon_device_type: "phone",
-  pv_player: "73932",
-  compliance_status: "0",
-  need_personal_recommend: "1",
-  player_so_load: "1",
-  is_android_pad_screen: "0",
-};
-
-// video_tab 的取址参数照抄 App 播放页（型号/版本与 DEVICE_PARAMS 不同，两者不能混用）。
-const TAB_DEVICE_PARAMS = {
+// 参考实现的设备基座（红果 7.1.3.32 / Redmi 25053RT47C 匿名档）。
+// 注意：video_tab 用 73932 播放器版本、旧 POST 链路用 74332，两处版本不同，不能混用。
+const BASE_DEVICE = {
   ac: "wifi",
   channel: "update_64",
   aid: "8662",
@@ -84,6 +53,32 @@ const TAB_DEVICE_PARAMS = {
   player_so_load: "1",
   is_android_pad_screen: "0",
 };
+const VIDEO_TAB_DEVICE = {
+  ...BASE_DEVICE,
+  version_code: "73932",
+  version_name: "7.3.9.32",
+  manifest_version_code: "73932",
+  update_version_code: "73932",
+  pv_player: "73932",
+};
+const PLAYBACK_DEVICE = {
+  ...BASE_DEVICE,
+  version_code: "74332",
+  version_name: "7.4.3.32",
+  manifest_version_code: "74332",
+  update_version_code: "74332",
+  pv_player: "74332",
+};
+
+// UA 里的版本号必须与 device.version_code 同步（参考实现就是 replace 出来的）。
+const VIDEO_UA_TEMPLATE =
+  "com.phoenix.read/71332 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; " +
+  "Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)";
+
+const UA = VIDEO_UA_TEMPLATE.replace("71332", "73932");
+// 旧无签名兜底路径沿用的参数名（等价映射）。
+const DEVICE_PARAMS = PLAYBACK_DEVICE;
+const TAB_DEVICE_PARAMS = BASE_DEVICE;
 
 const BIZ_PARAM = {
   detail_page_version: 0,
@@ -107,14 +102,14 @@ const QUALITY_KEYS = ["1080p", "720p", "540p", "480p", "360p", "compat"];
 // 与 Python urllib.parse.quote / 官方客户端的编码保持一致（额外转义 !'()），
 // 因为 x-argus 的 query hash 覆盖整串 query，编码方式必须与实际 URL 完全相同。
 function encodeValue(value) {
-  return encodeURIComponent(String(value == null ? "" : value)).replace(/[!'()*]/g, (ch) =>
+  return encodeURIComponent(String(value == null ? "" : value)).replace(/[!'()]/g, (ch) =>
     "%" + ch.charCodeAt(0).toString(16).toUpperCase()
   );
 }
 
 function buildQuery(values) {
   return Object.entries(values)
-    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .filter(([, value]) => value !== undefined && value !== null)
     .map(([key, value]) => encodeValue(key) + "=" + encodeValue(value))
     .join("&");
 }
@@ -123,6 +118,76 @@ export function dataDir() {
   const fromEnv = process.env.DATA_DIR;
   if (fromEnv && fromEnv.trim()) return path.resolve(fromEnv);
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "data");
+}
+
+// 纯函数：给定集号/身份/时间戳即可算出签名请求（导出以便 selftest 用金标向量对拍）。
+export function signPlaybackRequest({ epId, identity, ts, ticket, randField, ladonRandom, legacy }) {
+  // 未显式给出时生成随机源（生产路径），测试时传入固定值以便对拍。
+  if (randField === undefined || randField === null) randField = randomBytes(4).readInt32LE(0);
+  if (!ladonRandom) ladonRandom = randomBytes(4);
+  else if (!Buffer.isBuffer(ladonRandom)) ladonRandom = Buffer.from(ladonRandom);
+  const device = legacy ? PLAYBACK_DEVICE : VIDEO_TAB_DEVICE;
+  const base = { ...device, device_id: identity.device_id, iid: identity.iid };
+  if (identity.cdid) base.cdid = identity.cdid;
+  const values = legacy
+    ? {}
+    : {
+        video_id: String(epId),
+        video_id_type: "0",
+        device_level: "1",
+        need_all_video_definition: "1",
+        need_mp4_align: "0",
+        use_os_player: "0",
+        video_platform: "1024",
+        source: "0",
+        from_video_id: "",
+      };
+  const query = buildQuery({ ...base, ...values, ts: String(ts), _rticket: String(ticket) });
+  const payload = JSON.stringify({
+    biz_param: BIZ_PARAM,
+    mixed_video_id_map: { 1004: [String(epId)] },
+  });
+  const body = legacy ? gzipSync(Buffer.from(payload, "utf8")) : null;
+  // x-ss-stub 是「请求体（gzip 后字节）的 md5」，大写。
+  const stub = body ? createHash("md5").update(body).digest("hex") : "";
+  // ★ installId 必须传空串：带上 iid 时 x-argus 直接判伪造，上游回 200 空正文。
+  const headers = {
+    "User-Agent": VIDEO_UA_TEMPLATE.replace("71332", device.version_code),
+    Accept: "application/json; charset=utf-8,application/x-protobuf",
+    "x-ss-req-ticket": String(ts * 1000),
+    "sdk-version": "2",
+    "x-xs-from-web": "0",
+    "passport-sdk-version": legacy ? "5051452" : "50561",
+    "x-ss-dp": String(device.aid),
+    "x-khronos": String(ts),
+    "x-ladon": argus.Ladon.encrypt(ts, argus.PlayerSigner.LICENSE_ID, 8662, ladonRandom),
+    "x-argus": argus.Argus.sign(
+      query,
+      stub,
+      ts,
+      8662,
+      argus.PlayerSigner.LICENSE_ID,
+      identity.device_id,
+      "",
+      randField
+    ),
+    "x-tt-dt": "",
+    "x-tt-store-region": "cn",
+    "x-tt-store-region-src": "did",
+  };
+  if (body) {
+    headers["Content-Type"] = "application/json; charset=UTF-8";
+    headers["Content-Encoding"] = "gzip";
+    headers["x-ss-stub"] = stub;
+  } else {
+    headers["x-tt-request-tag"] = "t=0;n=0";
+  }
+  return {
+    url: (legacy ? MODEL_HOST + MODEL_PATH : TAB_HOST + TAB_PATH) + "?" + query,
+    method: legacy ? "post" : "get",
+    body,
+    headers,
+  };
 }
 
 export function createOfficial({ register, deriveContentKey, devices } = {}) {
@@ -144,11 +209,22 @@ export function createOfficial({ register, deriveContentKey, devices } = {}) {
       register,
     });
 
-  const stats = { requests: 0, ok: 0, empty: 0, failed: 0, rotated: 0, lastError: "", lastErrorAt: 0, registered: 0, invalidated: 0 };
+  const stats = { requests: 0, ok: 0, empty: 0, signed: 0, failed: 0, rotated: 0, lastError: "", lastErrorAt: 0, registered: 0, invalidated: 0 };
   // 空响应后的全局冷却截止时间（见 EMPTY_COOLDOWN）。
   let quietUntil = 0;
+  // 播放取址用的「一次性设备身份」（含 cdid）。60 秒内复用，避免每发都注册把注册接口打成风控。
+  let playIdentity = null;
+  let playIdentityAt = 0;
   // 设备身份现状随 /api/metrics 一起暴露（source / 轮换次数 / 被节流次数），只含脱敏设备号。
-  Object.defineProperty(stats, "device", { get: () => store.stats(), enumerable: true });
+  Object.defineProperty(stats, "device", {
+    get: () => {
+      const base = store.stats();
+      const id = playIdentity && playIdentity.device_id ? String(playIdentity.device_id) : "";
+      // 播放通道用一次性身份（register 直取），脱敏后暴露给 /api/metrics，便于确认「真的每次换新身份」。
+      return { ...base, playDevice: id ? id.replace(/^(\d{4})\d+(\d{3})$/, "$1***$2") : "", playDeviceAt: playIdentityAt };
+    },
+    enumerable: true,
+  });
   Object.defineProperty(stats, "cooldown", {
     get: () => ({ active: Date.now() < quietUntil, until: quietUntil }),
     enumerable: true,
@@ -160,7 +236,28 @@ export function createOfficial({ register, deriveContentKey, devices } = {}) {
     stats.lastErrorAt = Date.now();
   }
 
-  async function getIdentity(fresh = false) {
+  // 播放取址的身份：必须带 cdid（与注册 payload 同一份），且每次取址尽量用新身份。
+  // register() 就是 vendor 的 registerPlaybackDevice（本地已改为返回 cdid）。
+  // 60 秒内复用同一身份，避免每发都注册、把注册接口打成风控。
+  async function getPlayIdentity(fresh = false) {
+    if (!fresh && playIdentity && Date.now() - playIdentityAt < 60 * 1000) return playIdentity;
+    let identity;
+    const pinned = String(process.env.HONGGUO_DEVICE_ID || "").trim();
+    if (pinned) {
+      identity = await store.get({ maxAgeMs: DEVICE_TTL });
+      if (!identity.cdid)
+        identity.cdid = randomBytes(16).toString("hex").replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
+    } else {
+      identity = await register();
+      stats.registered += 1;
+    }
+    playIdentity = identity;
+    playIdentityAt = Date.now();
+    return identity;
+  }
+
+  // 非签名兜底路径统一走持久化身份仓库（旧行为，只在 HONGGUO_OFFICIAL_UNSIGNED=1 时用）。
+  async function getPlainIdentity(fresh = false) {
     const identity = fresh
       ? await store.refresh("fresh")
       : await store.get({ maxAgeMs: DEVICE_TTL });
@@ -201,9 +298,60 @@ export function createOfficial({ register, deriveContentKey, devices } = {}) {
     return model;
   }
 
-  // 主通道：无签名 GET video_tab（注册身份 + 播放页参数）。
-  async function requestTab(epId, options = {}) {
-    const id = await getIdentity(Boolean(options.freshIdentity));
+  // ── 签名请求（主路径）：query / header / body 与参考实现逐字段一致 ──────────────
+  // legacy=false → 签名 GET video_tab（73932 播放器档）；legacy=true → 签名 POST multi_video_model（74332）。
+  const signedRequest = (args) => signPlaybackRequest(args);
+
+
+  async function signedFetch({ epId, legacy, options = {} }) {
+    const identity = await getPlayIdentity(Boolean(options.freshIdentity));
+    const ticket = typeof options.ticket === "number" ? options.ticket : Date.now();
+    const ts = typeof options.ts === "number" ? options.ts : Math.floor(ticket / 1000);
+    const req = signedRequest({
+      epId,
+      identity,
+      ts,
+      ticket,
+      randField: options.randField,
+      ladonRandom: options.ladonRandom,
+      legacy,
+    });
+    if (legacy && options.freshIdentity) req.headers.Connection = "close";
+    stats.requests += 1;
+    stats.signed += 1;
+    const resp = await axios.request({
+      url: req.url,
+      method: req.method,
+      headers: req.headers,
+      data: req.body || undefined,
+      timeout: MODEL_TIMEOUT,
+      responseType: "text",
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+      // 已经是 gzip 字节，不要再让 axios 序列化/压缩一次。
+      transformRequest: [(data) => data],
+      validateStatus: () => true,
+    });
+    const label = legacy ? "model" : "video_tab";
+    if (resp.status === 403 || resp.status === 429) {
+      stats.empty += 1;
+      quietUntil = Date.now() + EMPTY_COOLDOWN;
+      throw new Error(label + " HTTP " + resp.status + "（风控）");
+    }
+    const text = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data || {});
+    if (resp.status !== 200) throw new Error(label + " HTTP " + resp.status);
+    if (!text.trim()) {
+      stats.empty += 1;
+      // 空正文 = 出口 IP 已被限流。设全局冷却，避免把惩罚窗越拖越长。
+      quietUntil = Date.now() + EMPTY_COOLDOWN;
+      throw new Error(label + " 空响应（上游限流）");
+    }
+    return legacy ? parseModel(text, epId) : parseTabModel(text, epId);
+  }
+
+  // ── 无签名兜底（只由 HONGGUO_OFFICIAL_UNSIGNED=1 触发，保留旧行为）─────────────
+  async function requestTabUnsigned(epId, options = {}) {
+    const id = await getPlainIdentity(Boolean(options.freshIdentity));
     const ts = Math.floor(Date.now() / 1000);
     const query = buildQuery({
       ...TAB_DEVICE_PARAMS,
@@ -223,11 +371,7 @@ export function createOfficial({ register, deriveContentKey, devices } = {}) {
     });
     stats.requests += 1;
     const resp = await axios.get(TAB_HOST + TAB_PATH + "?" + query, {
-      // 关键：不带任何签名头。带上 x-argus/x-ladon 反而会拿到 200 空正文。
-      headers: {
-        "User-Agent": UA,
-        Accept: "application/json; charset=utf-8,application/x-protobuf",
-      },
+      headers: { "User-Agent": UA, Accept: "application/json; charset=utf-8,application/x-protobuf" },
       timeout: MODEL_TIMEOUT,
       responseType: "text",
       validateStatus: () => true,
@@ -236,24 +380,16 @@ export function createOfficial({ register, deriveContentKey, devices } = {}) {
     if (resp.status !== 200) throw new Error("video_tab HTTP " + resp.status);
     if (!text.trim()) {
       stats.empty += 1;
-      // 空正文 = 出口 IP 已被限流。设全局冷却，避免把惩罚窗越拖越长。
       quietUntil = Date.now() + EMPTY_COOLDOWN;
       throw new Error("video_tab 空响应（上游限流）");
     }
     return parseTabModel(text, epId);
   }
 
-  // 备通道：无签名 POST multi_video_model（同样去掉签名头）。
-  async function requestModel(epId, options = {}) {
-    const id = await getIdentity(Boolean(options.freshIdentity));
+  async function requestModelUnsigned(epId, options = {}) {
+    const id = await getPlainIdentity(Boolean(options.freshIdentity));
     const ts = Math.floor(Date.now() / 1000);
-    const query = buildQuery({
-      ...DEVICE_PARAMS,
-      device_id: id.device_id,
-      iid: id.iid,
-      ts: String(ts),
-      _rticket: String(ts * 1000),
-    });
+    const query = buildQuery({ ...DEVICE_PARAMS, device_id: id.device_id, iid: id.iid, ts: String(ts), _rticket: String(ts * 1000) });
     const body = JSON.stringify({
       biz_param: BIZ_PARAM,
       mixed_video_id_map: { 1004: [String(epId)] },
@@ -302,17 +438,24 @@ export function createOfficial({ register, deriveContentKey, devices } = {}) {
     }
   }
 
-  // 降级顺序：video_tab（缓存身份）→ video_tab（新注册身份）→ 无签名 POST。
-  // 每次取址最多 3 发，空响应即全局冷却；宁可回落 360P，也不把 IP 打进惩罚窗。
+  // 取址顺序（对齐参考实现）：签名 GET video_tab（一次性身份）→ 空正文时补一发签名 POST。
+  // 每次取址最多 2 发；空正文/403/429 即全局冷却，宁可回落 360P，也不把 IP 打进惩罚窗。
   // 并发合并：/api/play 和 /api/stream 常同时要同一集的 model，合并成一次上游请求，
   // 也避免「play 侧超时放弃、stream 侧又看到失败缓存」直接掉到 360P。
-  async function runFetch(key, options) {
+  async function runFetch(key, options = {}) {
     if (Date.now() < quietUntil) throw new Error("官方通道冷却中（上次空响应，稍后自动恢复）");
-    const attempts = [
-      () => requestTab(key),
-      () => requestTab(key, { freshIdentity: true }),
-      () => requestModel(key, { freshIdentity: true }),
-    ];
+    const unsigned = String(process.env.HONGGUO_OFFICIAL_UNSIGNED || "") === "1";
+    const attempts = unsigned
+      ? [
+          () => requestTabUnsigned(key),
+          () => requestTabUnsigned(key, { freshIdentity: true }),
+          () => requestModelUnsigned(key, { freshIdentity: true }),
+        ]
+      : [
+          () => signedFetch({ epId: key, legacy: false, options }),
+          // 只有「空正文」才值得换旧 POST 链路再试；其它错误(网络/HTTP 5xx)换了也是白打。
+          () => signedFetch({ epId: key, legacy: true, options: { ...options, freshIdentity: true } }),
+        ];
     let lastError = null;
     for (const attempt of attempts) {
       try {

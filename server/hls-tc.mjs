@@ -67,6 +67,15 @@ async function runJob(job, { provider, logger }) {
   let staged = null;
   try {
     const stream = await provider.stream(job.epId, { quality: job.quality });
+    // 官方高清通道不可用（限流/熔断）时，provider 会静默回落成 360P 的 H.264 兼容流。
+    // 那不是 VVC，硬拿去转码只会在 mp4 解析处报「找不到视频轨」，对用户毫无意义；
+    // 这里直接给出可读原因，让前端提示「稍后重试 / 选 360P」。
+    if (String(stream.codec || "").toLowerCase() !== "vvc") {
+      throw fail(
+        "UPSTREAM_COOLDOWN",
+        "官方高清通道暂时不可用（当前已回落 360P），无法提供 " + job.quality + " 转码；请稍后重试，或直接选择 360P 兼容线路"
+      );
+    }
     staged = await stageVvcInput(stream);
   } catch (error) {
     job.state = "failed";

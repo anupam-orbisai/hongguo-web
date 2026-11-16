@@ -70,8 +70,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 section("vendor 文件与导出白名单");
 
-const VENDOR_BYTES = 90363;
-const VENDOR_SHA12 = "1f81793cf9b3";
+const VENDOR_BYTES = 90381;
+const VENDOR_SHA12 = "9844605186d7";
 const raw = fs.readFileSync(path.join(HERE, "vendor", "hongguo.cjs"));
 eq(raw.length, VENDOR_BYTES, "vendor 文件字节数未变");
 eq(crypto.createHash("sha256").update(raw).digest("hex").slice(0, 12), VENDOR_SHA12, "vendor 文件 sha256 前缀未变");
@@ -271,6 +271,49 @@ eq(signOnce.slice(0, 3), "8oE", "签名前缀为 0xf2 0x81 的 base64 头");
 eq(queryParam(SIGN_QUERY, "aid"), "1967", "queryParam 取出已有参数");
 eq(queryParam(SIGN_QUERY, "device_id"), "7000000000000000000", "queryParam 取出长数字参数");
 eq(queryParam(SIGN_QUERY, "missing"), null, "queryParam 缺失参数返回 null");
+
+// ------------------------------------------- 官方取址签名（金标向量对拍）
+// 这些向量由参考实现（jackotom/hongguo-drama 的 playback-signature.js signPlayer +
+// app-source.js 的 pythonUrlEncode）生成，钉住 query 编码、x-argus / x-ladon / x-ss-stub 的字节级一致。
+// 上游对签名极其敏感：query 少一个空参数、stub 大小写不同都会被判伪造并回 200 空正文。
+
+section("官方取址签名（signPlaybackRequest 金标向量）");
+
+const { signPlaybackRequest } = await import("./official.mjs");
+const VECTORS = JSON.parse(fs.readFileSync(path.join(HERE, "sign", "vectors.json"), "utf8"));
+
+for (const vector of VECTORS.cases) {
+  const tag = vector.legacy ? "POST" : "GET";
+  const built = signPlaybackRequest({
+    epId: vector.epId,
+    identity: vector.identity,
+    ts: Math.floor(vector.ticket / 1000),
+    ticket: vector.ticket,
+    randField: vector.randField,
+    ladonRandom: Buffer.from(vector.ladonRandom, "hex"),
+    legacy: vector.legacy,
+  });
+  const query = built.url.split("?")[1] || "";
+  eq(query, vector.query, tag + " 向量 query 与参考实现逐字节一致（" + vector.epId + "）");
+  eq(built.headers["x-ss-req-ticket"], vector.sig["x-ss-req-ticket"], tag + " x-ss-req-ticket 一致");
+  eq(built.headers["x-khronos"], vector.sig["x-khronos"], tag + " x-khronos 一致");
+  eq(built.headers["x-ladon"], vector.sig["x-ladon"], tag + " x-ladon 一致");
+  eq(built.headers["x-argus"], vector.sig["x-argus"], tag + " x-argus 一致");
+  if (vector.legacy) {
+    // POST 会把 payload gzip 后作为请求体，x-ss-stub = gzip 字节的 md5（小写）。
+    const bodyHash = crypto.createHash("md5").update(built.body).digest("hex");
+    eq(bodyHash, vector.bodyHash, tag + " 请求体 gzip 字节的 md5 一致");
+    eq(built.headers["x-ss-stub"], vector.sig["x-ss-stub"], tag + " x-ss-stub 小写一致");
+    eq(built.headers["Content-Encoding"], "gzip", tag + " 声明 Content-Encoding: gzip");
+    eq(built.method, "post", tag + " 走 POST");
+  } else {
+    eq(built.body, null, tag + " 不带请求体");
+    eq(built.headers["x-tt-request-tag"], "t=0;n=0", tag + " 空体带 x-tt-request-tag");
+    eq(built.method, "get", tag + " 走 GET");
+  }
+  // installId 必须是空串，否则 x-argus 被上游判伪造。
+  eq(built.headers["x-argus"].length > 100, true, tag + " x-argus 非空");
+}
 
 // ------------------------------------------------------- 播放地址拆分/分类
 

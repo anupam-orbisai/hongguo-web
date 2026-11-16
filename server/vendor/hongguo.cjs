@@ -627,11 +627,11 @@ function registerPayload() {
     const cipher = crypto.createCipheriv('aes-128-cbc', derived.subarray(0, 16), derived.subarray(16, 32));
     const plain = Buffer.concat([crypto.createHash('sha512').update(compressed).digest(), compressed]);
     const body = Buffer.concat([Buffer.from('746305100000', 'hex'), random, cipher.update(plain), cipher.final()]);
-    return { body, ticket: now };
+    return { body, ticket: now, cdid };
 }
 
 async function registerPlaybackDevice() {
-    const { body, ticket } = registerPayload();
+    const { body, ticket, cdid } = registerPayload();
     const headers = {
         'User-Agent': REGISTER_UA, Accept: 'application/json', 'Content-Type': 'application/octet-stream;tt-data=a',
         'log-encode-type': 'gzip', 'x-ss-dp': '8662', 'x-ss-req-ticket': String(ticket), 'x-vc-bdturing-sdk-version': '4.0.3.cn',
@@ -643,7 +643,7 @@ async function registerPlaybackDevice() {
     const deviceId = str(data?.device_id_str || data?.device_id);
     const iid = str(data?.install_id_str || data?.install_id);
     if (resp.status !== 200 || !deviceId || !iid) throw new Error('device_register 失败: ' + resp.status);
-    return { device_id: deviceId, iid, time: Date.now() };
+    return { device_id: deviceId, iid, cdid, time: Date.now() };
 }
 
 let playbackIdentityCache = null;
