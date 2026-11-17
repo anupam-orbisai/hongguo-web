@@ -341,19 +341,17 @@ const v5Body = zlib.gzipSync(Buffer.from(v5Payload));
 const v5Now = 1762600000000;
 const v5Once = signPlaybackV5({ base: V5_BASE, values: V5_VALUES, body: v5Body, now: v5Now });
 const v5Twice = signPlaybackV5({ base: V5_BASE, values: V5_VALUES, body: v5Body, now: v5Now });
-const V5_GOLDEN_URL =
-  V5_BASE +
-  "?aid=8662&app_name=novelread&version_code=74332&version_name=7.4.3.32&channel=vivo_8662_64" +
-  "&device_platform=android&device_type=PGT-AN10&os_version=12&update_version_code=74332" +
-  "&iid=8000000000000000&cdid=123e4567-e89b-42d3-a456-426614174000&device_id=7000000000000000" +
-  "&_rticket=1762600000023";
-eq(v5Once.url, V5_GOLDEN_URL, "V5 黄金向量：固定入参的 URL（含分支 ticket）与固定值一致");
+// gzip 输出字节随 zlib 版本变化（CI 与本地不同），因此不钉 body 相关定值：
+// 只断言 URL 形状/参数顺序、ticket 范围、x-ss-stub 与实际 body 自洽。
+eq(v5Once.url.startsWith(V5_BASE + "?"), true, "V5 URL 以 base + ? 开头");
+eq(v5Once.url.slice(V5_BASE.length + 1).split("&").map((p) => p.split("=")[0]).join(","),
+  "aid,app_name,version_code,version_name,channel,device_platform,device_type,os_version" +
+  ",update_version_code,iid,cdid,device_id,_rticket", "V5 query 参数顺序与参考实现一致");
+const v5Ticket = Number(v5Once.headers["x-ss-req-ticket"]);
+eq(Number.isSafeInteger(v5Ticket) && v5Ticket >= v5Now && v5Ticket < v5Now + 1024, true, "V5 x-ss-req-ticket 落在 [now, now+1024) 的分支窗口内");
+eq(v5Once.url.endsWith("&_rticket=" + v5Ticket), true, "V5 URL 的 _rticket 与响应头 ticket 一致");
 eq(v5Once.headers["x-khronos"], "1762600000", "V5 x-khronos = 秒级时间戳");
-eq(v5Once.headers["x-ss-req-ticket"], "1762600000023", "V5 x-ss-req-ticket = 选中的分支 ticket");
-eq(v5Once.headers["x-ss-stub"], "C151B22DF8D597ECA7D9AB268768111B", "V5 x-ss-stub = 请求体 gzip 字节 md5 的大写 hex");
-eq(v5Once.headers["x-ss-stub"], crypto.createHash("md5").update(v5Body).digest("hex").toUpperCase(), "V5 x-ss-stub 与实际请求体自洽");
-eq(typeof v5Once.headers["x-helios"] === "string" && v5Once.headers["x-helios"].length > 0, true, "V5 x-helios 非空");
-// x-helios / x-medusa 内部带随机 nonce（模拟真实客户端），只断言形状与长度。
+eq(v5Once.headers["x-ss-stub"], crypto.createHash("md5").update(v5Body).digest("hex").toUpperCase(), "V5 x-ss-stub = 请求体 gzip 字节 md5 的大写 hex（自洽）");
 eq(v5Once.headers["x-helios"].length > 20, true, "V5 x-helios 非空且长度合理");
 eq(v5Once.headers["x-medusa"].length > 100, true, "V5 x-medusa 非空且长度合理");
 eq(v5Twice.url, v5Once.url, "V5 同入参 URL 确定一致（分支 ticket 由 body/query 决定）");
