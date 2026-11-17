@@ -39,8 +39,10 @@ jobs:
       - name: Selftest (offline)
         run: |
           set -eu
-          corepack enable
-          pnpm --prefix server install --prod --frozen-lockfile
+          # 仓库根目录没有 package.json，corepack 在根目录调用 pnpm 会解析不到
+          # packageManager，转而下载 latest 并与 server/package.json 的 9.15.9 冲突。
+          # 这里用 npx 显式固定版本，避开 corepack 的版本解析。
+          npx --yes pnpm@9.15.9 --prefix server install --prod --frozen-lockfile
           node server/selftest.mjs
 
       - name: Login to GHCR
