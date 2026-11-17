@@ -4,6 +4,8 @@ import { safeFetch, PRIVATE_FETCH_ALLOWED } from "../net.mjs";
 
 // 元信息与核心方法约定，与糖葫芦（THLRedGuo / CatPaw）单文件源保持一致。
 const RE_ID = /\bid\s*:\s*["']([^"']+)["']/;
+// spider 对象内的 id 才是真身份；文件别处（注释/示例）出现的 id: 字面量不能当元信息。
+const RE_SPIDER_ID = /\bspider\s*=\s*\{[\s\S]{0,8000}?\bid\s*:\s*["']([^"']+)["']/;
 const RE_NAME = /\bname\s*:\s*["']([^"']+)["']/;
 const RE_VER = /\bversion\s*:\s*["']([^"']+)["']/;
 const RE_UPDATE_URL = /\bupdateUrl\s*:\s*["']([^"']+)["']/;
@@ -18,7 +20,7 @@ const WORKER_STACK_MB = Math.max(2, Number(process.env.SOURCE_WORKER_STACK_MB) |
 const WORKER_URL = new URL("./worker.mjs", import.meta.url);
 
 export function parseMeta(code) {
-  const id = RE_ID.exec(code);
+  const id = RE_SPIDER_ID.exec(code) || RE_ID.exec(code);
   const name = RE_NAME.exec(code);
   const version = RE_VER.exec(code);
   const updateUrl = RE_UPDATE_URL.exec(code);
@@ -36,7 +38,7 @@ export function validateMeta(code) {
   if (!meta.id) problems.push('缺少 id: "..."');
   else if (!/^[\w.\-]{1,64}$/.test(meta.id)) problems.push("id 只能包含字母、数字、下划线、点、横线（1–64 位）");
   if (!meta.name) problems.push('缺少 name: "..."');
-  if (meta.version && !/^\d{1,9}\.\d{1,9}\.\d{1,9}/.test(meta.version)) problems.push("version 不是 x.y.z 形式");
+  if (meta.version && !/^\d{1,9}\.\d{1,9}\.\d{1,9}$/.test(meta.version)) problems.push("version 不是 x.y.z 形式");
   if (!/\bspider\b/.test(code)) problems.push("没有 spider 对象");
   if (/^\s*(import|export)\s/m.test(code)) problems.push("含 ES Module 语法（沙箱不支持）");
   if (/\brequire\s*\(/.test(code)) problems.push("含 require()（沙箱不支持）");

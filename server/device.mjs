@@ -165,8 +165,11 @@ export function createDeviceStore(options = {}) {
           })
         );
       }
+      // 只钉了 device_id：补到的 iid 必须落盘缓存，否则每次 get() 都重新注册（设备 churn 会抬高风险）。
       const pair = await registerOnce();
-      return adopt({ device_id: pinnedId, iid: pair.iid, time: Date.now() }, "env");
+      const adopted = adopt({ device_id: pinnedId, iid: pair.iid, time: Date.now() }, "env");
+      persist(adopted);
+      return adopted;
     }
     const maxAge = Number(options.maxAgeMs) > 0 ? Number(options.maxAgeMs) : ttlMs;
     if (current && Date.now() - currentAt < maxAge) return current;

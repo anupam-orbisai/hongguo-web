@@ -7,25 +7,30 @@
 //   1. 采样描述里的 4CC 写的是 hvc1（HEVC），实际码流是 VVC → 必须自己按 stsz/stco/stsc 剥出 NAL；
 //   2. 配置盒是 bv2C（非标准），ffmpeg 会当成 extradata 解析失败 → 只取码流，不依赖容器。
 // 音轨另存一份“去掉视频轨”的 MP4 让 ffmpeg 直接读，避免自己实现 ADTS 封装。
-import { spawn, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fail } from "./errors.mjs";
 
 const FFMPEG = process.env.FFMPEG_PATH || "ffmpeg";
-const MAX_INPUT = Number(process.env.TRANSCODE_MAX_INPUT_BYTES || 96 * 1024 * 1024);
+const MAX_INPUT = Number(process.env.TRANSCODE_MAX_INPUT_BYTES || 64 * 1024 * 1024);
+const READ_TIMEOUT_MS = Number(process.env.TRANSCODE_READ_TIMEOUT_MS || 60 * 1000);
 let availability = null;
+let availabilityAt = 0;
+const AVAILABILITY_RETRY_MS = 60 * 1000;
 
-// ffmpeg 是否存在只在第一次用到时探一次；没有就明确告知前端，而不是给一段黑屏。
+// ffmpeg 是否存在：可用结果长期缓存；不可用时 60 秒后重探，避免运行期装上 ffmpeg 也永远被判无转码。
 export function transcodeAvailable() {
-  if (availability !== null) return availability;
+  if (availability === true) return true;
+  if (availability === false && Date.now() - availabilityAt < AVAILABILITY_RETRY_MS) return false;
   try {
     execFileSync(FFMPEG, ["-hide_banner", "-version"], { timeout: 5000, stdio: "ignore" });
     availability = true;
   } catch {
     availability = false;
   }
+  availabilityAt = Date.now();
   return availability;
 }
 
@@ -159,9 +164,12 @@ async function readAll(stream) {
   if (!total) throw new Error("分片总长为 0");
   if (total > MAX_INPUT) throw fail("SOURCE_OOM", "该集文件过大，超出转码上限（" + MAX_INPUT + " 字节）");
   const parts = [];
+  const startedAt = Date.now();
   for (let off = 0; off < total; off += CH) {
+    if (Date.now() - startedAt > READ_TIMEOUT_MS) throw fail("UPSTREAM_TIMEOUT", "拉取该集分片超时，已放弃转码");
     parts.push(await stream.chunk(off, Math.min(off + CH - 1, total - 1)));
   }
+  // 注意：这里会把整集读进内存（峰值约 2×MAX_INPUT），默认上限已压到 64 MB，避免并发转码把进程撑爆。
   const buf = Buffer.concat(parts);
   return buf.subarray(0, total);
 }
@@ -178,11 +186,17 @@ export async function stageVvcInput(stream) {
   const annex = annexB(buf, layout.video);
   const audio = audioOnlyMp4(buf, layout);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hg-tc-"));
-  const vFile = path.join(dir, "v.h266");
-  const aFile = path.join(dir, "a.mp4");
-  fs.writeFileSync(vFile, annex);
-  if (audio) fs.writeFileSync(aFile, audio);
-  return { dir, vFile, aFile, hasAudio: Boolean(audio), bytesIn: buf.length };
+  try {
+    const vFile = path.join(dir, "v.h266");
+    const aFile = path.join(dir, "a.mp4");
+    fs.writeFileSync(vFile, annex);
+    if (audio) fs.writeFileSync(aFile, audio);
+    return { dir, vFile, aFile, hasAudio: Boolean(audio), bytesIn: buf.length };
+  } catch (error) {
+    // 写临时文件失败必须清掉刚建的目录，否则每次失败都泄漏一个 hg-tc-*。
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 export function dropStage(dir) {

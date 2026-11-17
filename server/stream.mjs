@@ -1,5 +1,6 @@
 import { fail } from "./errors.mjs";
 import { probeMp4Head } from "./mp4.mjs";
+import { withTimeout } from "./util.mjs";
 
 const CHUNK = 1024 * 1024;
 // 同一集同一档位的取址去重计数（只统计，供 /api/metrics 观察效果）。
@@ -8,15 +9,6 @@ const DEDUPE = { lookups: 0, shared: 0 };
 // 导出给 http/transcode 复用：转码路径（?tc=1）也必须走同一份白名单，
 // 否则它成了绕过档位校验的后门（review S2）。
 export const QUALITIES = new Set(["auto", "1080p", "720p", "540p", "480p", "360p", "compat"]);
-
-function withTimeout(promise, ms, message) {
-  let timer;
-  const timeout = new Promise((_resolve, reject) => {
-    timer = setTimeout(() => reject(fail("TIMEOUT", message)), ms);
-    if (timer && timer.unref) timer.unref();
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-}
 
 // 解析 Range 头；非法或不满足返回 null（调用方回 416）。
 export function byteRange(value, total) {

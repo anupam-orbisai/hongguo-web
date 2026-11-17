@@ -524,6 +524,7 @@ async function resolveCover(id) {
   try {
     const r = await requestJson(HOST + "/api/v1/app/play/movieDetails", {
       method: "POST",
+      timeoutMs: 8000,
       body: JSON.stringify({ id: did, source: 0, typeId: "S1", userId: "223664" })
     });
     thirdPlayId = text(r && r.data && r.data.thirdPlayId);
@@ -540,10 +541,11 @@ function needsCover(item) {
   return !cover || COVER_BAD_HOST.test(cover);
 }
 async function enrichCovers(list) {
-  const targets = list.filter(needsCover);
+  // 整页补封面会按「每项 2 个请求」放大上游压力并逼近首页超时；单页只补前 6 个缺图项，其余保留下游兜底图。
+  const targets = list.filter(needsCover).slice(0, 6);
   if (!targets.length) return list;
   let cursor = 0;
-  const limit = Math.min(5, targets.length);
+  const limit = Math.min(4, targets.length);
   const worker = async function () {
     while (cursor < targets.length) {
       const item = targets[cursor++];

@@ -18,7 +18,7 @@
     loadingMore: false, autoNextLatch: false, aggregate: false, aggGroups: [],
     // 自动连播：开关（本地持久化）、假结束恢复一次性标志、最后稳定播放位置
     autoNext: true, falseEndRecovered: false, lastPos: 0,
-    fallback: null, fallbackLoading: false, health: null,
+    fallback: null, fallbackLoading: false,
     iosFs: false, // iOS Safari 原生视频全屏中（iPhone 不支持元素级全屏，只能靠 webkit 事件记录）
     user: null, favs: [], follows: [],
     // P1(#2)：列表会话内的「上一页 id 签名」，用于识别源忽略 page 参数、反复返回同一批
@@ -148,7 +148,8 @@
   function request(path, params, options) {
     var qs = new URLSearchParams(params || {}).toString();
     var url = path + (qs ? ('?' + qs) : '');
-    var opts = options || {};
+    // P2(W-04)：复制一份再删 timeoutMs，避免直接改写调用方传进来的 options 对象。
+    var opts = Object.assign({}, options || {});
     var timeoutMs = Number(opts.timeoutMs) || 0;
     if ('timeoutMs' in opts) delete opts.timeoutMs;
     opts.headers = headers(opts.headers);
@@ -172,7 +173,6 @@
       }
       var clearTimer = function () { if (timer) { clearTimeout(timer); timer = null; } };
       return fetch(url, o).then(function (r) {
-        clearTimer();
         return r.text().then(function (text) {
           var body = {};
           if (text) {
@@ -193,6 +193,18 @@
             err.code = body && body.code; err.status = r.status; throw err;
           }
           return body;
+        }).then(function (body) {
+          // body 解析完成（或确认失败）后再清超时定时器：否则上游只吐了响应头、
+          // body 卡住时定时器已被清掉，列表会永久停在「加载中…」。
+          clearTimer();
+          return body;
+        }, function (e) {
+          clearTimer();
+          // body 读取阶段被 abort（超时）同样要翻译成 TIMEOUT，而不是裸 AbortError。
+          if (e && e.name === 'AbortError') {
+            var bte = new Error('请求超时，请稍后重试'); bte.code = 'TIMEOUT'; throw bte;
+          }
+          throw e;
         });
       }, function (e) {
         clearTimer();
@@ -275,6 +287,32 @@
     histStore(out);
   }
   function histClear() { try { localStorage.removeItem(HIST_KEY); } catch (e) {} state.histKey = null; }
+  // 回滚一次失败的本地删除：把记录按原时间插回去（不触发补推，服务端本就还在）。
+  function histRestore(entry) {
+    if (!entry) return;
+    var arr = histLoad(), k = histKey(entry.source, entry.id);
+    for (var i = 0; i < arr.length; i++) if (histKey(arr[i].source, arr[i].id) === k) return;
+    arr.push(entry);
+    arr.sort(function (a, b) { return (b.at || 0) - (a.at || 0); });
+    histStore(arr);
+  }
+  // 统一的「删除一条观看历史」：先删本地，再同步服务端。
+  // P1(W-01)：聚合搜索下 state.viewSource 可能为空，直接拼 /api/me/history//<id>
+  // 会被服务端两段非空正则拒绝（404）；source 为空时跳过远端（对齐 removeFav 的空值保护）。
+  // 远端失败不再静默吞错，而是回滚本地删除并提示，避免「本地删了、服务端还在、下次同步又复活」。
+  function removeHistoryEverywhere(source, id) {
+    var src = source || state.viewSource || (state.source === '__all' ? '' : state.source);
+    var prev = histGet(src, id);
+    histRemove(src, id);
+    if (!state.user || !src) return Promise.resolve(true);
+    return deleteJson('/api/me/history/' + encodeURIComponent(src) + '/' + encodeURIComponent(id)).then(function () {
+      return true;
+    }).catch(function (e) {
+      histRestore(prev);
+      toast('删除同步失败：' + ((e && e.message) || '网络错误') + '，已恢复记录，请稍后重试');
+      return false;
+    });
+  }
 
   // ---- 账号 / 多设备同步 ----
   var UTOKEN_KEY = 'hg_user_token', authMode = 'login';
@@ -379,6 +417,31 @@
       pos: e.pos, dur: e.dur, at: e.at || Date.now(),
     }).catch(function () {});
   }
+  // W-05：登录补推改用小并发队列（最多 3 路），失败重试一次并汇总一条提示，
+  // 避免一次 100 个并发 PUT 把弱网/限流打满、还静默失败。
+  function pushHistoryStrict(e) {
+    return putJson('/api/me/history', {
+      source: e.source, id: e.id, title: e.title, cover: e.cover,
+      lineIdx: e.lineIdx, lineName: e.lineName, epIdx: e.epIdx, epName: e.epName,
+      pos: e.pos, dur: e.dur, at: e.at || Date.now(),
+    }).then(function () { return true; }, function () { return false; });
+  }
+  function backfillHistory(entries) {
+    var queue = (entries || []).slice(), failed = 0, CONC = 3;
+    function worker() {
+      if (!queue.length) return Promise.resolve();
+      var e = queue.shift();
+      return pushHistoryStrict(e).then(function (ok) {
+        if (ok) return;
+        return pushHistoryStrict(e).then(function (ok2) { if (!ok2) failed += 1; });
+      }).then(worker);
+    }
+    var runners = [];
+    for (var i = 0; i < Math.min(CONC, queue.length); i++) runners.push(worker());
+    return Promise.all(runners).then(function () {
+      if (failed) toast('有 ' + failed + ' 条观看记录同步失败，切换网络后下次登录会自动补推');
+    });
+  }
   function mergeServerHistory() {
     if (!state.user) return Promise.resolve([]);
     return api('/api/me/history', { limit: 100 }).then(function (r) {
@@ -390,12 +453,14 @@
         var k = histKey(s.source, s.id), cur = byKey[k];
         if (!cur || (s.at || 0) > (cur.at || 0)) byKey[k] = s;
       });
-      // 服务器缺失或更旧的本地记录补推
+      // 服务器缺失或更旧的本地记录补推（限并发队列，不再 100 并发）
+      var pending = [];
       local.forEach(function (e) {
         var s = null;
         for (var i = 0; i < server.length; i++) if (histKey(server[i].source, server[i].id) === histKey(e.source, e.id)) { s = server[i]; break; }
-        if (!s || (e.at || 0) > (s.at || 0)) pushHistory(e);
+        if (!s || (e.at || 0) > (s.at || 0)) pending.push(e);
       });
+      if (pending.length) backfillHistory(pending);
       var merged = Object.keys(byKey).map(function (k) { return byKey[k]; })
         .sort(function (a, b) { return (b.at || 0) - (a.at || 0); }).slice(0, HIST_MAX);
       histStore(merged);
@@ -476,7 +541,11 @@
   var updatesInflight = null;
   function checkUpdates(force, silent) {
     if (!state.user) return Promise.resolve([]);
-    if (updatesInflight) return updatesInflight;
+    if (updatesInflight) {
+      // P3(W-15)：in-flight 合并会丢掉 force；本次需要 force 就等当前请求结束后再跑一次。
+      if (force) return updatesInflight.then(function () { return checkUpdates(true, silent); }, function () { return checkUpdates(true, silent); });
+      return updatesInflight;
+    }
     updatesInflight = fetchUpdates(force, silent).then(function (ups) {
       updatesInflight = null;
       return ups;
@@ -546,8 +615,7 @@
     }
     items.forEach(function (it) {
       var row = document.createElement('div'); row.className = 'histrow';
-      var img = document.createElement('img'); img.className = 'histcover'; img.referrerPolicy = 'no-referrer'; img.loading = 'lazy'; img.referrerPolicy = 'no-referrer';
-      img.src = posterUrl(it.cover); img.onerror = function () { img.src = PLACEHOLDER; };
+      var img = makeCover(it.cover);
       row.appendChild(img);
       var info = document.createElement('div'); info.className = 'histinfo';
       var t = document.createElement('div'); t.className = 'histtitle'; t.textContent = it.title || it.id;
@@ -640,7 +708,6 @@
   // 与 #notice 分开：聚合搜索的进度提示很频繁，混在一条里会互相覆盖。
   function renderHealthBar(s) {
     var el = $('healthBar'); if (!el) return;
-    state.health = s || null;
     if (!s || !s.enabled || s.status === 'ok' || s.status === 'unknown') {
       el.classList.add('hidden'); el.textContent = ''; syncBanners();
       return;
@@ -656,6 +723,16 @@
   }
 
   function posterUrl(src) { return src || PLACEHOLDER; }
+  // P3(W-17)：历史/收藏封面统一走 makeCover，保证 referrerPolicy='no-referrer' 与兜底一致。
+  function makeCover(src) {
+    var img = document.createElement('img');
+    img.className = 'histcover';
+    img.referrerPolicy = 'no-referrer';
+    img.loading = 'lazy';
+    img.src = posterUrl(src);
+    img.onerror = function () { img.src = PLACEHOLDER; };
+    return img;
+  }
 
   function tagList(tags) {
     if (Array.isArray(tags)) return tags.map(function (t) { return String(t || '').trim(); }).filter(Boolean);
@@ -933,15 +1010,14 @@
     if (b.seeds) return head + '根据你的 ' + b.seeds + ' 部观看记录暂时没找到相近的剧，先补一些热门；多看几部后推荐会更准。';
     return head + '还没有观看记录，先给你热门榜单；看几部之后这里会变成专属推荐。';
   }
-  function loadForYou(refresh) {
+  function loadForYou() {
     setView('home'); setNav('foryou'); showNotice('');
     state.searching = false;
     state.hasMore = false;
     var seq = nextReq();
-    var act = function () { loadForYou(refresh); };
+    var act = function () { loadForYou(); };
     state.aggregate = false; state.aggGroups = [];
     state.mode = 'foryou'; state.tid = ''; state.q = ''; state.page = 1; state.classes = [];
-    state.hasMore = false;
     $('chips').textContent = ''; $('grid').textContent = ''; $('btnMore').classList.add('hidden');
     setEmptyState('正在为你挑选…');
     setAutoMore(false); state.loadingMore = true;
@@ -951,7 +1027,7 @@
     });
     // P3(#7)：无论 0 结果 / 失败 / 超时，占位「正在为你挑选…」都必须被真实空态替换掉。
     var done = function () { state.loadingMore = false; setAutoMore(false); };
-    return postJson('/api/for-you', { seeds: seeds, refresh: refresh === true }, { timeoutMs: LIST_TIMEOUT_MS }).then(function (r) {
+    return postJson('/api/for-you', { seeds: seeds }, { timeoutMs: LIST_TIMEOUT_MS }).then(function (r) {
       done();
       if (!isCurrent(seq)) return;
       state.failedAction = null;
@@ -959,7 +1035,7 @@
       renderItems(state.items, false);
       showNotice(forYouNote(r));
       if (!state.items.length) {
-        setEmptyState('还没有足够数据，先看热门', { note: '多看几部之后这里会变成专属推荐。', retry: act, retryText: '再试一次' });
+        setEmptyState('还没有足够数据，先看热门', { note: '多看几部之后这里会变成专属推荐。', retry: act, retryText: '重新加载' });
       }
     }).catch(function (e) {
       done();
@@ -1047,7 +1123,10 @@
     var bad = gs.filter(function (g) { return g.error; });
     var txt = '聚合搜索：已返回 ' + loaded + '/' + gs.length + ' 个源，共 ' + total + ' 条';
     if (parts.length) txt += '（' + parts.join('，') + '）';
-    if (bad.length) txt += '；失败：' + bad.map(function (g) { return g.name + '（' + g.error + '）'; }).join('，');
+    if (bad.length) {
+      txt += '；' + bad.length + ' 个源本次请求失败：' + bad.map(function (g) { return g.name + '（' + g.error + '）'; }).join('，');
+      txt += '，可点「重试」重新加载';
+    }
     if (loaded < gs.length) txt += ' · 加载中…';
     return txt;
   }
@@ -1116,7 +1195,8 @@
         g.loading = false;
         failed += 1;
         // 失败不推进 g.page，下次滚动仍从同一页重试。
-        if (!append) { g.error = e && e.message ? e.message : '请求失败'; }
+        // P2(W-08)：翻页（append）阶段的失败也要记录，否则用户以为「没有更多了」。
+        g.error = (e && e.message ? e.message : '请求失败');
       }).then(function () {
         if (viewSeq === reqSeq) showNotice(aggNote());
       });
@@ -1399,9 +1479,6 @@
     for (var i = 0; i < opts.length; i++) if (opts[i].key === key) return opts[i];
     return null;
   }
-  function hasHevcOption() {
-    return (state.qualityOptions || []).some(function (o) { return o.codec === 'hevc'; });
-  }
   // P2(#4)：启动时就把 HEVC 能力探测好（state.hevcCap），清晰度菜单构建时直接可用，
   // 不必等到第一次起播才知道本机能不能解 HEVC。
   function probeHevcCap(force) {
@@ -1502,7 +1579,8 @@
     var cur = optionByKey(state.qualityKey);
     var curH = cur && cur.height ? cur.height : 1e9;
     var cands = (state.qualityOptions || []).filter(function (o) {
-      return o.url && o.key !== 'auto' && o.key !== 'compat' && !qualityGate(o).dead && (o.height || 0) < curH;
+      // P2(W-06)：跳过已经自动降档失败过的档位，避免从失败档再降到另一个同样解不出的档。
+      return o.url && o.key !== 'auto' && o.key !== 'compat' && !qualityGate(o).dead && !state.failedKeys[o.key] && (o.height || 0) < curH;
     }).sort(function (a, b) { return (b.height || 0) - (a.height || 0); });
     if (cands[0]) return cands[0];
     if (cur && cur.key === 'compat') return null;
@@ -1565,6 +1643,8 @@
   }
   // 切换到指定档位：native 直链靠换 src，HLS 靠 hls.js 的 level。
   function switchNativeQuality(o, byUser) {
+    // P2(W-09)：播放器已关闭时不再换流/写地址栏（1.2s 补档定时器或迟到回调会走到这里）。
+    if ($('player').classList.contains('hidden')) return false;
     var v = $('video'); if (!v || !o || !o.url) return false;
     var at = v.currentTime || 0;
     var wasPlaying = !v.paused;
@@ -1735,10 +1815,15 @@
       return;
     }
     if (o.levelIndex != null && state.hls && (state.qualityOptions || []).length > 1) {
+      // P2(W-03)：点当前已选档位时不要进入 switching，否则按钮永久卡「切换中…」，
+      // 还会让 HEVC「有音无画」的自动降档被 state.switching 永久短路。
+      if (state.hls.currentLevel === o.levelIndex) { toast('已是 ' + o.label); return; }
       state.quality = o.levelIndex;
       state.switching = true;
       try { state.hls.currentLevel = o.levelIndex; } catch (e) {}
       updateQualityBtn();
+      // 兜底：LEVEL_SWITCHED 偶尔不来（同档/无切流），1.5s 后强制清掉进行中状态。
+      setTimeout(function () { if (state.switching) { state.switching = false; updateQualityBtn(); } }, 1500);
       toast('清晰度：' + (o.levelIndex < 0 ? '自动' : o.label));
     } else {
       toast('该源仅提供 ' + (currentResolutionLabel() || '单一') + ' 清晰度');
@@ -1898,18 +1983,44 @@
     if (!state.detail) { toast('请重新选择剧集'); return; }
     playEpisode(state.line || 0, state.epIdx || 0, $('video').currentTime || 0, false);
   }
+  // P1(W-02)：播放失败时的「换数据源」不再丢掉当前剧。
+  // 优先复用 loadFallback 已取到的同剧候选（state.fallback），没有就现取一次
+  // /api/play/fallback（按剧名找同剧）；仍没有才让用户从源列表里选，
+  // 选中后用 openDetail(同一部剧 id, 新源) 打开并续上当前集号，全程保留 state.detail。
   function switchPlaybackSource() {
-    var current = state.source;
-    var list = (state.sources || []).filter(function (item) {
-      return item.id !== current && item.id !== '__all' && item.id !== 'template' && item.id !== 'maccms';
+    if (state.fallback) { useFallback(); return; }
+    var d = state.detail;
+    if (!d || !d.id) { toast('请先选择要播放的剧集'); return; }
+    var btn = $('btnPlayerSwitch'); if (btn) btn.disabled = true;
+    api('/api/play/fallback', { source: state.viewSource, id: d.id, index: state.epIdx || 0 }).then(function (r) {
+      if (btn) btn.disabled = false;
+      var list = (r && r.candidates) || [];
+      if (list.length) { state.fallback = list[0]; useFallback(); return; }
+      chooseSourceForCurrentDrama(d);
+    }).catch(function () {
+      if (btn) btn.disabled = false;
+      chooseSourceForCurrentDrama(d);
+    });
+  }
+  // 没有同剧候选时，让用户从其它源里选一个，切源后按剧名重新搜索（不同源剧 id 不通用）。
+  function chooseSourceForCurrentDrama(d) {
+    var list = (state.sources || []).filter(function (s) {
+      return s && s.id && s.id !== state.viewSource && s.id !== '__all' && s.id !== 'template' && s.id !== 'maccms';
     });
     if (!list.length) { toast('没有其他可用数据源'); return; }
-    var next = list[0];
+    var names = list.map(function (s, i) { return (i + 1) + '. ' + (s.name || s.id); }).join('\n');
+    var ans = window.prompt('没找到同剧的其它源，选择要切换到的数据源（输入序号）：\n' + names, '1');
+    if (ans === null) return;
+    var idx = parseInt(ans, 10) - 1;
+    if (!(idx >= 0 && idx < list.length)) { toast('无效的选择'); return; }
+    var nextId = list[idx].id;
+    // 不同源的剧 id 不通用，直接把原 id 丢给新源大概率 404；切源后用剧名在新源里搜一次更靠谱。
     closePlayer();
-    toast('正在切换到 ' + (next.name || next.id) + '…');
-    setActiveSource(next.id).then(function () {
-      toast('已切换到 ' + (next.name || next.id) + '，请重新选择剧集');
-    }).catch(function (e) { toast('切换失败：' + e.message); });
+    toast('已切换到「' + (list[idx].name || nextId) + '」，正在按剧名搜索该剧…');
+    setActiveSource(nextId).then(function () {
+      if (d.title) { $('q').value = d.title; doSearch(); }
+      else toast('已切换数据源，请重新选择剧集');
+    }).catch(function (e) { toast('切换失败：' + ((e && e.message) || '网络错误')); });
   }
 
 
@@ -2259,13 +2370,17 @@
   }
   // 有音无画的兜底检查：loadeddata +400ms、loadedmetadata +1200ms 各查一次，仍没画面就提示换档。
   function armStallCheck(v, delay) {
-    diagTimers.push(setTimeout(function () {
+    // P3(W-16)：回调执行后把 id 从数组移除，避免已触发的定时器 id 一直累积。
+    var id = setTimeout(function () {
+      var at = diagTimers.indexOf(id);
+      if (at !== -1) diagTimers.splice(at, 1);
       if (state.playKind !== 'native' || state.hevcFallback) return;
       if (!v || v.paused || v.readyState < 2 || v.videoWidth > 0) return;
       var kind = classifyPlayback(v, null);
       if (kind === 'playable') return;
       showPlayerError(DIAG_TEXT[kind](null), kind);
-    }, delay));
+    }, delay);
+    diagTimers.push(id);
   }
 
   function bindPlayerEvents() {
@@ -2438,27 +2553,15 @@
     // 用户开了省流量模式就别预取。
     if (navigator.connection && navigator.connection.saveData) return;
     var key = state.viewSource + '|' + d.id + '|' + state.line + '|' + ((state.epIdx || 0) + 1);
-    if (prefetchCache.has(key) || prefetchKey === key) return;
+    // 缓存项带 url：命中前校验确实是这一路的地址，避免旧记录挡住真正需要的预取。
+    var cached = prefetchCache.get(key);
+    if ((cached && cached.url) || prefetchKey === key) return;
     prefetchKey = key;
     api('/api/play', { source: state.viewSource, flag: line.flag, id: next.id }).then(function (r) {
       // 取址失败要回滚占位 key，否则这一集之后永远被 prefetchKey === key 拦住，再也预取不到。
-      if (!r || !r.url) { prefetchKey = ''; return; }
+      if (!r || !r.url) { if (prefetchKey === key) prefetchKey = ''; return; }
       // HLS 要 hls.js 解析清单才有意义，这里只预热直链（红果/西饭/牛牛这类 mp4）。
-      if (r.type === 'hls') { prefetchCache.set(key, { at: Date.now() }); trimPrefetch(); return; }
-      if (!prefetchEl) {
-        prefetchEl = document.createElement('video');
-        prefetchEl.preload = 'auto';
-        prefetchEl.muted = true;
-        prefetchEl.playsInline = true;
-        prefetchEl.setAttribute('aria-hidden', 'true');
-        prefetchEl.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none';
-        prefetchEl.addEventListener('loadeddata', function () {
-          var k = prefetchEl._hgKey;
-          try { prefetchEl.removeAttribute('src'); prefetchEl.load(); } catch (e) {}
-          if (k) { prefetchCache.set(k, { at: Date.now() }); trimPrefetch(); }
-        });
-        document.body.appendChild(prefetchEl);
-      }
+      if (r.type === 'hls') { prefetchCache.set(key, { at: Date.now(), url: r.url }); if (prefetchKey === key) prefetchKey = ''; trimPrefetch(); return; }
       // 预取要用「下一集真正会播的那一档」：默认 auto 是 HEVC，不支持 HEVC 的浏览器预热了也播不了。
       var purl = r.url;
       if (r.quality && Array.isArray(r.quality.options) && r.quality.options.length) {
@@ -2472,10 +2575,30 @@
         if (pick && pick.url) purl = pick.url;
       }
       // 转码档是 HLS 清单：<video> 预取不认 m3u8，预热没意义，直接记成已处理。
-      if (/\.m3u8(\?|$)/.test(String(purl))) { prefetchCache.set(key, { at: Date.now() }); trimPrefetch(); return; }
-      prefetchEl._hgKey = key;
-      prefetchEl.src = authUrl(purl);
-    }).catch(function () { prefetchKey = ''; });
+      if (/\.m3u8(\?|$)/.test(String(purl))) { prefetchCache.set(key, { at: Date.now(), url: purl }); if (prefetchKey === key) prefetchKey = ''; trimPrefetch(); return; }
+      var playUrl = authUrl(purl);
+      // P2(W-07)：每次预取用独立的一次性监听，闭包捕获本次 key（原实现共用 _hgKey 会串键）。
+      if (prefetchEl) {
+        try { prefetchEl.removeAttribute('src'); prefetchEl.load(); if (prefetchEl.parentNode) prefetchEl.parentNode.removeChild(prefetchEl); } catch (e) {}
+        prefetchEl = null;
+      }
+      var el = document.createElement('video');
+      el.preload = 'auto';
+      el.muted = true;
+      el.playsInline = true;
+      el.setAttribute('aria-hidden', 'true');
+      el.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none';
+      el.addEventListener('loadeddata', function () {
+        try { el.removeAttribute('src'); el.load(); if (el.parentNode) el.parentNode.removeChild(el); } catch (e) {}
+        if (prefetchEl === el) prefetchEl = null;
+        prefetchCache.set(key, { at: Date.now(), url: playUrl });
+        if (prefetchKey === key) prefetchKey = '';
+        trimPrefetch();
+      }, { once: true });
+      prefetchEl = el;
+      document.body.appendChild(el);
+      el.src = playUrl;
+    }).catch(function () { if (prefetchKey === key) prefetchKey = ''; });
   }
   function trimPrefetch() {
     while (prefetchCache.size > PREFETCH_MAX) prefetchCache.delete(prefetchCache.keys().next().value);
@@ -2483,7 +2606,8 @@
   function stopPrefetch() {
     prefetchKey = '';
     if (!prefetchEl) return;
-    try { prefetchEl.removeAttribute('src'); prefetchEl.load(); } catch (e) {}
+    try { prefetchEl.removeAttribute('src'); prefetchEl.load(); if (prefetchEl.parentNode) prefetchEl.parentNode.removeChild(prefetchEl); } catch (e) {}
+    prefetchEl = null;
   }
 
   function closePlayer() {
@@ -2493,6 +2617,8 @@
     if (v.webkitDisplayingFullscreen && v.webkitExitFullscreen) { try { v.webkitExitFullscreen(); } catch (e) {} }
     // 关掉播放器后，仍在路上的 /api/play 响应不应再把播放器打开。
     playSeq++;
+    // P2(W-09)：让起播后 1.2s 的「后台补档」定时器失效，避免关闭后仍重新取流、写回 ?quality=。
+    state.playToken = (state.playToken || 0) + 1;
     closeQualityMenu();
     hidePlayerError();
     clearDiag();
@@ -2575,10 +2701,10 @@
     go.addEventListener('click', function () { playEpisode(e.lineIdx || 0, e.epIdx || 0, finished ? 0 : (e.pos || 0)); });
     var del = document.createElement('button'); del.className = 'btn ghost mini'; del.textContent = '清除';
     del.addEventListener('click', function () {
-      histRemove(state.viewSource, d.id);
-      if (state.user) deleteJson('/api/me/history/' + encodeURIComponent(state.viewSource || '') + '/' + encodeURIComponent(d.id)).catch(function () {});
-      updateResumeBar(d);
-      if (state.detail) renderEps(state.detail, state.line);
+      removeHistoryEverywhere(state.viewSource, d.id).then(function () {
+        updateResumeBar(d);
+        if (state.detail) renderEps(state.detail, state.line);
+      });
     });
     bar.appendChild(txt); bar.appendChild(go); bar.appendChild(del);
   }
@@ -2596,9 +2722,7 @@
     }
     arr.forEach(function (e) {
       var row = document.createElement('div'); row.className = 'histrow';
-      var img = document.createElement('img'); img.className = 'histcover';
-      img.src = posterUrl(e.cover); img.loading = 'lazy';
-      img.onerror = function () { img.src = PLACEHOLDER; };
+      var img = makeCover(e.cover);
       row.appendChild(img);
 
       var info = document.createElement('div'); info.className = 'histinfo';
@@ -2626,8 +2750,7 @@
       var del = document.createElement('button'); del.className = 'btn ghost mini danger'; del.textContent = '删除';
       del.addEventListener('click', function (ev) {
         ev.stopPropagation();
-        histRemove(e.source, e.id); renderHistory();
-        if (state.user) deleteJson('/api/me/history/' + encodeURIComponent(e.source || '') + '/' + encodeURIComponent(e.id)).catch(function () {});
+        removeHistoryEverywhere(e.source, e.id).then(function () { renderHistory(); });
       });
       acts.appendChild(go); acts.appendChild(del);
       row.appendChild(acts);
@@ -2800,6 +2923,10 @@
       if (failed) msg += '，失败 ' + failed + ' 个';
       if (older) msg += '，上游版本更低 ' + older + ' 个';
       if (busy) msg += '，正在检查 ' + busy + ' 个';
+      // P3(W-13)：服务端静默跳过 autoUpdate=false / 无 updateUrl 的源，这里单独说明，
+      // 避免全部跳过时显示「更新 0 个，已是最新 0 个」自相矛盾。
+      var skippedCount = Math.max(0, (state.sources || []).length - results.length);
+      if (skippedCount) msg += '，' + skippedCount + ' 个源不支持自动更新';
       toast(msg);
       return refreshManage();
     }).catch(function (e) {
@@ -2945,9 +3072,13 @@
     });
   });
 
-  // 只读调试钩子：无头浏览器验证/排障用，正常使用不依赖它
+  // 只读调试钩子：无头浏览器验证/排障用，正常使用不依赖它。
+  // P3(W-12)：只在 ?debug 下挂载，且不暴露 state 本体——通过 getter 返回浅拷贝快照（顶层只读）。
+  var DEBUG_HOOK = (function () { try { return new URLSearchParams(location.search).has('debug'); } catch (e) { return false; } })();
+  if (DEBUG_HOOK) {
   window.__hg = {
-    state: state, openPlayer: openPlayer, cycleQuality: cycleQuality,
+    get state() { return Object.freeze(Object.assign({}, state)); },
+    openPlayer: openPlayer, cycleQuality: cycleQuality,
     cycleRate: cycleRate, toggleFullscreen: toggleFullscreen, histLoad: histLoad,
     toggleAutoNext: toggleAutoNext, autoNextAllowed: autoNextAllowed, realEnd: realEnd,
     loadRecommend: loadRecommend, loadForYou: loadForYou, loadMore: loadMore, maybeAutoMore: maybeAutoMore,
@@ -2969,6 +3100,7 @@
     diagnose: { probe: probeStream, classify: classifyPlayback, report: diagnoseAndReport, arm: armStallCheck, clear: clearDiag },
     prefetch: { cache: prefetchCache, el: function () { return prefetchEl; }, next: prefetchNext, trim: trimPrefetch }
   };
+  }
 
   // ---- 启动 ----
   function bootFromQuery() {

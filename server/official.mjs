@@ -118,7 +118,6 @@ const DEVICE_TTL = 6 * 60 * 60 * 1000;
 const MODEL_TIMEOUT = 12000;
 
 // 质量档位：按分辨率从高到低，前端清晰度菜单直接用。
-const QUALITY_KEYS = ["1080p", "720p", "540p", "480p", "360p", "compat"];
 
 // 与 Python urllib.parse.quote / 官方客户端的编码保持一致（额外转义 !'()），
 // 因为 x-argus 的 query hash 覆盖整串 query，编码方式必须与实际 URL 完全相同。
@@ -216,6 +215,17 @@ export function createOfficial({ register, deriveContentKey, devices } = {}) {
     throw new Error("createOfficial 需要 register / deriveContentKey");
 
   const cache = new Map(); // epId -> { time, value } | { time, error }
+  const CACHE_MAX = Math.max(16, Number(process.env.HONGGUO_MODEL_CACHE_MAX || 512) || 512);
+  // 写入统一走这里：刷新插入顺序 + 超上限时淘汰最旧，避免长期运行内存单调增长。
+  function remember(key, entry) {
+    cache.delete(key);
+    cache.set(key, entry);
+    while (cache.size > CACHE_MAX) {
+      const oldest = cache.keys().next().value;
+      if (oldest === undefined || oldest === key) break;
+      cache.delete(oldest);
+    }
+  }
   const inflight = new Map(); // epId -> Promise（同一集并发请求只打一次上游）
   // 设备身份（B3）：持久化 + 校验 + 节流轮换都交给 device.mjs，
   // 这里只负责「什么时候用旧身份、什么时候必须换」。
@@ -242,7 +252,8 @@ export function createOfficial({ register, deriveContentKey, devices } = {}) {
       const base = store.stats();
       const id = playIdentity && playIdentity.device_id ? String(playIdentity.device_id) : "";
       // 播放通道用一次性身份（register 直取），脱敏后暴露给 /api/metrics，便于确认「真的每次换新身份」。
-      return { ...base, playDevice: id ? id.replace(/^(\d{4})\d+(\d{3})$/, "$1***$2") : "", playDeviceAt: playIdentityAt };
+      const masked = id ? (id.length <= 8 ? "***" : id.slice(0, 4) + "***" + id.slice(-3)) : "";
+      return { ...base, playDevice: masked, playDeviceAt: playIdentityAt };
     },
     enumerable: true,
   });
@@ -265,7 +276,8 @@ export function createOfficial({ register, deriveContentKey, devices } = {}) {
     let identity;
     const pinned = String(process.env.HONGGUO_DEVICE_ID || "").trim();
     if (pinned) {
-      identity = await store.get({ maxAgeMs: DEVICE_TTL });
+      // store 里的身份是共享对象：浅拷贝后再补 cdid，避免把一次性 cdid 写回长期身份。
+      identity = { ...(await store.get({ maxAgeMs: DEVICE_TTL })) };
       if (!identity.cdid)
         identity.cdid = randomBytes(16).toString("hex").replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
     } else {
@@ -520,6 +532,7 @@ export function createOfficial({ register, deriveContentKey, devices } = {}) {
       if (cached) {
         if (cached.value && Date.now() - cached.time < MODEL_TTL) return cached.value;
         if (cached.error && Date.now() - cached.time < MODEL_FAIL_TTL) throw cached.error;
+        cache.delete(key); // 已过期：顺手删掉，别把内存当垃圾场
       }
       const running = inflight.get(key);
       if (running) return running;
@@ -552,7 +565,7 @@ export function createOfficial({ register, deriveContentKey, devices } = {}) {
       for (const attempt of attempts) {
         try {
           const model = await attempt();
-          cache.set(key, { time: Date.now(), value: model });
+          remember(key, { time: Date.now(), value: model });
           stats.ok += 1;
           return model;
         } catch (error) {
@@ -574,7 +587,7 @@ export function createOfficial({ register, deriveContentKey, devices } = {}) {
         try {
           const model = await chain[idx]();
           quietUntil = 0; // 成功即解除冷却（上一发空正文可能只是单发失败）
-          cache.set(key, { time: Date.now(), value: model });
+          remember(key, { time: Date.now(), value: model });
           stats.ok += 1;
           return model;
         } catch (error) {
@@ -582,11 +595,11 @@ export function createOfficial({ register, deriveContentKey, devices } = {}) {
           const message = String((error && error.message) || error);
           if (/风控|HTTP 403|HTTP 429/.test(message)) break;
           if (!retriable.test(message)) break;
-          if (Date.now() < quietUntil && idx >= chain.length - 1) break;
+          if (Date.now() < quietUntil) break; // 一进入冷却就停，别继续换身份/接口把惩罚窗拖长
         }
       }
     }
-    cache.set(key, { time: Date.now(), error: lastError });
+    remember(key, { time: Date.now(), error: lastError });
     markError(lastError);
     throw lastError;
   }
@@ -714,5 +727,3 @@ export function createOfficial({ register, deriveContentKey, devices } = {}) {
     },
   };
 }
-
-export { QUALITY_KEYS };

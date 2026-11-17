@@ -1,3 +1,5 @@
+import { withTimeout, titleKey, titleScore } from "./util.mjs";
+
 // 猜你喜欢：基于观看历史的推荐。
 // 三个信号源（按权重叠加）：
 //   1) 协同过滤：所有用户的历史里，和你的片单共同出现过的其它剧（跨账号聚合，只读、不外泄他人数据）
@@ -18,42 +20,6 @@ function str(value, max) {
 function keyOf(item) {
   return (item && item.source ? String(item.source) : "") + "|" + (item && item.id ? String(item.id) : "");
 }
-function withTimeout(promise, ms, message) {
-  let timer = 0;
-  return Promise.race([
-    promise.finally(() => clearTimeout(timer)),
-    new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error(message)), ms);
-      if (timer.unref) timer.unref();
-    }),
-  ]);
-}
-
-function titleKey(value) {
-  return String(value || "")
-    .toLowerCase()
-    .replace(/[\s\u3000·・:：!！?？,，.。、\-—_~～|/\\()（）\[\]【】{}<>《》"'“”‘’#*+]/g, "")
-    .replace(/(短剧|全集|全\d+集|已完结|更新至\d+集?|第[一二三四五六七八九十百\d]+季)/g, "");
-}
-function titleScore(a, b) {
-  const x = titleKey(a);
-  const y = titleKey(b);
-  if (!x || !y) return 0;
-  if (x === y) return 1;
-  if (x.length >= 2 && y.length >= 2 && (x.includes(y) || y.includes(x))) return 0.9;
-  if (x.length < 2 || y.length < 2) return 0;
-  const grams = (text) => {
-    const set = new Set();
-    for (let i = 0; i < text.length - 1; i += 1) set.add(text.slice(i, i + 2));
-    return set;
-  };
-  const gx = grams(x);
-  const gy = grams(y);
-  let hit = 0;
-  for (const gram of gx) if (gy.has(gram)) hit += 1;
-  return (2 * hit) / (gx.size + gy.size);
-}
-
 function normalizeSeeds(input) {
   const list = Array.isArray(input) ? input : [];
   const out = [];

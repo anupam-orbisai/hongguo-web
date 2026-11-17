@@ -7,6 +7,7 @@ import axios from "axios";
 import { fail } from "./errors.mjs";
 import { createOfficial, dataDir } from "./official.mjs";
 import { createDeviceStore } from "./device.mjs";
+import { withTimeout } from "./util.mjs";
 import {
   acquire,
   breakerSeconds,
@@ -228,15 +229,6 @@ let recommendPool = null;
 let recommendPoolAt = 0;
 let recommendPoolPending = null;
 
-function withTimeout(promise, ms, message) {
-  let timer;
-  const timeout = new Promise((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), ms);
-    if (timer && timer.unref) timer.unref();
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-}
-
 const rankCard = (row) => ({
   id: String(row.url || ""),
   title: String(row.title || ""),
@@ -448,7 +440,10 @@ export const provider = {
         } catch (error) {
           // 加密方案不支持是“确定的格式结论”，不是上游抖动：直接透出 CENC_UNSUPPORTED（502），
           // 不要静默回落成 360P / 花屏，让用户看到明确文案。
-          if (error && error.code === "CENC_UNSUPPORTED") throw error;
+          if (error && error.code === "CENC_UNSUPPORTED") {
+            releaseProbe(BREAKERS.official); // 确定结论也要释放半开探测，别让熔断卡在 probe 状态
+            throw error;
+          }
           // 高清通道失败只降级（360P 兜底通常仍可用），但要按同一套判据喂官方通道熔断：
           // 被风控时连续失败到阈值就拉闸，之后一段时间直接走 360P，不再白等模型超时。
           const message = String((error && error.message) || error).slice(0, 300);

@@ -9,7 +9,7 @@ import { proxyMedia, proxyHls } from "./media.mjs";
 import { isPrivateHost } from "./net.mjs";
 
 const MAX_BODY = 3 * 1024 * 1024;
-const MAX_PAGE = 500;
+const MAX_PAGE_PARAM = 500; // 分页参数上限（与 catalog 的 MAX_PAGE=20 翻页硬上限不是一回事）
 
 function sendJson(res, status, value, extraHeaders) {
   const headers = {
@@ -63,7 +63,7 @@ function parseJsonBody(text) {
 
 function pageOf(q) {
   const page = Number(q.get("page") || 1);
-  if (!Number.isInteger(page) || page < 1 || page > MAX_PAGE) throw fail("BAD_INPUT", "分页参数无效（1–" + MAX_PAGE + "）");
+  if (!Number.isInteger(page) || page < 1 || page > MAX_PAGE_PARAM) throw fail("BAD_INPUT", "分页参数无效（1–" + MAX_PAGE_PARAM + "）");
   return page;
 }
 
@@ -233,7 +233,7 @@ export function createServer({ provider, sources, catalog, users = null, monitor
       const u = requireUser(ctx);
       return ctx.json(200, users.clearHistory(u.id));
     }],
-    ["DELETE", /^\/api\/me\/history\/([^/]+)\/([^/]+)$/, (ctx) => {
+    ["DELETE", /^\/api\/me\/history\/([^/]*)\/([^/]+)$/, (ctx) => {
       const u = requireUser(ctx);
       return ctx.json(200, users.deleteHistory(u.id, decode(ctx.params[0]), decode(ctx.params[1])));
     }],
@@ -245,7 +245,7 @@ export function createServer({ provider, sources, catalog, users = null, monitor
       const body = parseJsonBody(await readBody(ctx.req));
       return ctx.json(200, users.addFavorite(u.id, body));
     }],
-    ["DELETE", /^\/api\/me\/favorites\/([^/]+)\/([^/]+)$/, (ctx) => {
+    ["DELETE", /^\/api\/me\/favorites\/([^/]*)\/([^/]+)$/, (ctx) => {
       const u = requireUser(ctx);
       return ctx.json(200, users.removeFavorite(u.id, decode(ctx.params[0]), decode(ctx.params[1])));
     }],
@@ -257,7 +257,7 @@ export function createServer({ provider, sources, catalog, users = null, monitor
       const body = parseJsonBody(await readBody(ctx.req));
       return ctx.json(200, users.addFollow(u.id, body));
     }],
-    ["DELETE", /^\/api\/me\/follows\/([^/]+)\/([^/]+)$/, (ctx) => {
+    ["DELETE", /^\/api\/me\/follows\/([^/]*)\/([^/]+)$/, (ctx) => {
       const u = requireUser(ctx);
       return ctx.json(200, users.removeFollow(u.id, decode(ctx.params[0]), decode(ctx.params[1])));
     }],
@@ -455,15 +455,19 @@ export function createServer({ provider, sources, catalog, users = null, monitor
 
     if (token && url.pathname.startsWith("/api/")) requireToken(req, token, url);
 
-    // 没有口令时，管理写接口只对内网开放（见 ADMIN_WRITE 注释）。
-    if (
-      !token &&
-      url.pathname.startsWith("/api/") &&
-      !["GET", "HEAD"].includes(req.method) &&
-      isAdminWrite(url.pathname) &&
-      !isPrivateHost(req.socket && req.socket.remoteAddress)
-    ) {
-      throw fail("PROTECTED", "对外网开放的管理接口需要先设置 TOKEN 环境变量");
+    // 没有口令时，管理写接口与 /api/metrics 只对内网开放（见 ADMIN_WRITE 注释）。
+    // 反代部署下 remoteAddress 恒为代理私网地址，不能据此判内网：未声明信任代理却带
+    // X-Forwarded-For 的请求一律按外网处理，避免「公网经反代调用管理接口」。
+    if (!token && url.pathname.startsWith("/api/")) {
+      const isWrite = !["GET", "HEAD"].includes(req.method) && isAdminWrite(url.pathname);
+      const isSensitiveRead = url.pathname === "/api/metrics";
+      if (isWrite || isSensitiveRead) {
+        let ip = clientIp(req);
+        if (!TRUST_PROXY && req.headers["x-forwarded-for"]) ip = "";
+        if (!isPrivateHost(ip)) {
+          throw fail("PROTECTED", "对外网开放的管理接口需要先设置 TOKEN 环境变量");
+        }
+      }
     }
 
     let pathMatched = false;
@@ -518,7 +522,9 @@ export function createServer({ provider, sources, catalog, users = null, monitor
         return;
       }
       if (!error || !error.code) {
-        console.error(JSON.stringify({ event: "request_failed", path: req.url, message: String((error && error.message) || error) }));
+        let failedPath = req.url || "/";
+        try { failedPath = new URL(failedPath, "http://localhost").pathname; } catch { /* 非法 URL 原样记 */ }
+        console.error(JSON.stringify({ event: "request_failed", path: failedPath, message: String((error && error.message) || error) }));
       }
       const code = (error && error.code) || "UPSTREAM_ERROR";
       sendJson(

@@ -5,9 +5,6 @@ import { DatabaseSync } from "node:sqlite";
 // SQLite 持久化：账号、登录令牌、观看历史、收藏、追剧。
 // 数据文件放在 DATA_DIR（默认 /app/data，容器里挂在命名卷上），重建容器不丢。
 const SCHEMA = `
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
-
 CREATE TABLE IF NOT EXISTS users (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   username    TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -74,6 +71,25 @@ CREATE TABLE IF NOT EXISTS prefs (
 );
 `;
 
+// 版本化迁移：user_version 记录已应用到第几版；新改动只往后追加，别改历史项。
+const MIGRATIONS = [SCHEMA];
+
+function migrate(db) {
+  const row = db.prepare("PRAGMA user_version").get();
+  const current = Number(row && row.user_version ? row.user_version : 0);
+  for (let v = current; v < MIGRATIONS.length; v++) {
+    db.exec("BEGIN");
+    try {
+      db.exec(MIGRATIONS[v]);
+      db.exec("PRAGMA user_version = " + (v + 1));
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+}
+
 export function openDb(dataDir) {
   fs.mkdirSync(dataDir, { recursive: true });
   const file = path.join(dataDir, "hongguo.db");
@@ -82,6 +98,7 @@ export function openDb(dataDir) {
   // 给 5 秒等待窗口，让并发写退化成「慢一点」而不是 500（review S10）。
   db.exec("PRAGMA busy_timeout = 5000");
   db.exec("PRAGMA journal_mode = WAL");
-  db.exec(SCHEMA);
+  db.exec("PRAGMA foreign_keys = ON");
+  migrate(db);
   return db;
 }

@@ -6,6 +6,7 @@
 //   html.parse(html字符串) -> { find(选择器), text() }   节点: .text() .attr(name) .attrs .children
 //   console / JSON / Promise / async-await / Map / Set
 // 没有：require、import、setTimeout、local、req、pdfh、Buffer、document、btoa。
+// 网页版（本项目服务端 worker）是超集：另提供 setTimeout/clearTimeout/btoa/atob/URL/URLSearchParams/TextEncoder/TextDecoder。
 //
 // App 调用你的方式（全部是 async，返回普通对象即可）：
 //   spider.home(filter)                      -> {class:[{type_id,type_name}], filters:{}}

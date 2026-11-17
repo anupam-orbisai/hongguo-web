@@ -104,7 +104,8 @@ async function requestJson(url, options, retried) {
   if (!res.ok) throw failure("星芽接口返回 HTTP " + res.status, "HTTP_" + res.status);
   let data = null;
   try { data = JSON.parse(raw); } catch (e) { throw failure("星芽接口返回非 JSON", "INVALID_RESPONSE"); }
-  if (data && data.code && data.code !== "ok" && data.code !== 0) {
+  const code = text(data && data.code).toLowerCase(); // 上游 code 有 0/'0'/'ok' 多种写法，统一归一化再判
+  if (data && data.code !== undefined && data.code !== null && data.code !== "" && code !== "ok" && code !== "0") {
     // token 过期时自动重登一次
     if (!retried && /Unauthorized|签名失败/i.test(text(data.code) + text(data.msg))) {
       await ensureToken(true);

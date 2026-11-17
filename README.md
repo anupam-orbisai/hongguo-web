@@ -282,8 +282,9 @@ var spider = {
     return { class: [{ type_id: "1", type_name: "全部" }], list: [] };  // list 可省略，服务端会用第一个分类兜底
   },
   category: function (tid, page, filter, extend) {              // 分类列表（分页）
-    return { page: page, pagecount: page + 1, hasMore: true,
-             list: [{ vod_id: "id1", vod_name: "剧名", vod_pic: "https://…", vod_remarks: "更新至10集" }] };
+    const list = [{ vod_id: "id1", vod_name: "剧名", vod_pic: "https://…", vod_remarks: "更新至10集" }];
+    const hasMore = list.length > 0;                             // 有下一页才给 hasMore
+    return { page: page, pagecount: hasMore ? page + 1 : page, hasMore: hasMore, list: list };
   },
   detail: function (id) {                                       // 详情 + 播放串
     return { list: [{ vod_id: id, vod_name: "剧名",               // 必须放 list[0]，返回 {vod:{...}} 不被识别
@@ -292,7 +293,9 @@ var spider = {
       vod_play_url: "第1集$ep1#第2集$ep2" }] };                  // 集用 #，集名与集 ID 用 $
   },
   search: function (wd, quick, page) {                          // 搜索（分页）
-    return { page: page, pagecount: page + 1, hasMore: false, list: [] };
+    const list = [];
+    const hasMore = false;                                       // 有下一页才给 hasMore
+    return { page: page, pagecount: hasMore ? page + 1 : page, hasMore: hasMore, list: list };
   },
   play: function (flag, id, flags) {                            // 取播放地址
     return "https://example.com/stream.m3u8";                   // 或 { url, header }
@@ -303,7 +306,7 @@ var spider = {
 要点：
 
 - 有网可用 `await fetch(url, { headers, timeoutMs })`；`html.parse(...)` 可用（支持 `tag`、`.class`、`#id`、`tag.class`、空格后代选择器）。
-- `updateUrl` 必须是 HTTPS 且返回同一个 `id` 的源；更新前会跑一次 `home` 自检，失败保留旧版本。按 URL 导入时即使 meta 没写 `updateUrl`，也会用导入地址作为上游。
+- `updateUrl` 必须是 HTTPS 且返回同一个 `id` 的源；更新前会跑一次 `home` + 首条详情自检，失败保留旧版本。按 URL 导入时即使 meta 没写 `updateUrl`，也会用导入地址作为上游。
 - `play` 返回**可直连**的 `m3u8` / `mp4`（`flv` 能识别但没有播放器）。返回 `parse: 1`（需要 webview 嗅探）本服务**不支持**，会报「需要 webview 嗅探解析」。
 - 分页约定：`pagecount` 建议返回 `hasMore ? page + 1 : page`，`hasMore` 明确有无下一页（写死 `page + 1` 会让前端无限翻页）。
 - 除上述方法外还可选实现 `feed / rankings / recommendations / rankingBoards / seriesSeasons / danmaku` 等（本服务目前只用核心方法）。
@@ -398,7 +401,7 @@ hongguo-web/
 │     ├─ runtime.mjs                # JS 源运行时装配（每源独立 worker_threads）
 │     ├─ worker.mjs                 # 沙箱线程：node:vm + resourceLimits
 │     ├─ manager.mjs                # 源的扫描 / 安装 / 删除 / 启用 / 自动更新
-│     └─ shims.js                   # fetch / HTML 解析垫片（对齐 App 内 CatPaw 运行时）
+│     └─ shims.js                   # HTML 解析垫片（对齐 App 内 CatPaw 运行时）
 ├─ sources/builtin/                 # 内置 JS 源：qimao / xifan / xingya / niuniu / template / maccms
 └─ web/                             # 前端静态页 + hls.js + PWA（manifest / sw.js / icons/）
 ```
@@ -409,10 +412,10 @@ hongguo-web/
 
 ```bash
 docker run --rm -v "$PWD":/w -w /w node:22-trixie-slim sh -c \
-  "npm --prefix server install --omit=dev --no-audit --no-fund && node server/selftest.mjs"
+  "corepack enable && pnpm --prefix server install --prod --frozen-lockfile && node server/selftest.mjs"
 ```
 
-本机有 Node 22.5+ 时直接 `npm --prefix server install --omit=dev && npm --prefix server run selftest` 即可。黄金向量钉住的是「当前已验证行为」：上游 vendor 换算法时它会失败，这是预期——先人工确认新算法，再更新向量。
+本机有 Node 22.5+ 时直接 `pnpm --prefix server install --prod --frozen-lockfile && node server/selftest.mjs` 即可。黄金向量钉住的是「当前已验证行为」：上游 vendor 换算法时它会失败，这是预期——先人工确认新算法，再更新向量。
 
 ## 7. 已知限制
 
@@ -429,8 +432,8 @@ docker run --rm -v "$PWD":/w -w /w node:22-trixie-slim sh -c \
 - **推荐页首次加载慢**：需要抓红果四个榜单共 20 页（约 10 秒），结果在服务端缓存 10 分钟，之后翻页很快；单页抓取失败只丢当页。
 - **聚合搜索耗时**：各源并发、先回先展示，不等最慢的源；单源聚合上限 12 秒（内置红果 30 秒），超时或失败只丢该源并在提示条注明。模板 / 示例源（`template`、`maccms`）默认不参与聚合，避免 404 与示例数据噪音。
 - **JS 源默认禁止访问内网**：默认只允许公网 http(s)；确有内网源自建需求时设 `ALLOW_PRIVATE_FETCH=1`。
-- **JS 源沙箱**：每源独立 `worker_threads`，默认 64 MB 内存上限；死循环 / 超时或内存超限自动终止该源线程，不影响主服务，下次调用自动重启；单次同步执行超过 5 秒会被中断。可用 `SOURCE_WORKER_MAX_OLD_MB` 等调整。
-- **源自动更新**：只对 HTTPS 上游生效；内置红果解密源不在自动更新范围内（依赖服务端解密模块，需随镜像升级）。更新失败保留旧版本并记录原因，可在源管理面板查看。
+- **JS 源沙箱**：每源独立 `worker_threads`，默认 64 MB 内存上限；死循环 / 超时或内存超限自动终止该源线程，不影响主服务，下次调用自动重启；单次同步段超过 5 秒会被强制中断，异步整体调用按 home/category/detail 40 秒、搜索/播放 60 秒计。可用 `SOURCE_WORKER_MAX_OLD_MB` 等调整。
+- **源自动更新**：只对 HTTPS 上游的用户 JS 源生效；内置源（红果解密源与内置 JS 源）均不在自动更新范围内，需随镜像升级。更新失败保留旧版本并记录原因，可在源管理面板查看。
 - 仅供个人学习与自用；内容版权归各平台所有，请勿用于商业分发。
 
 ## 8. 截图

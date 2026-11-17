@@ -43,7 +43,8 @@ function safeFileName(id) {
 }
 
 // 源管理：内置源 + data 目录中的用户源 + 更新状态。
-// 更新只写 data/sources，不修改镜像内只读的内置源；内置源被更新后由同 id 的用户文件覆盖。
+// 内置源随镜像发布、不可被用户源覆盖（install/checkUpdate 均拒绝），因此也不参与自动更新；
+// 用户源才写 data/sources 并可自动更新。
 export class SourceManager {
   constructor({ builtinDir, dataDir }) {
     this.builtinDir = builtinDir;
@@ -212,7 +213,7 @@ export class SourceManager {
     const sources = [];
     for (const source of this.registry.values()) {
       const saved = state[source.id] || {};
-      const updateUrl = saved.url || source.updateUrl || "";
+      const updateUrl = source.builtin ? "" : saved.url || source.updateUrl || "";
       sources.push({
         id: source.id,
         name: source.name,
@@ -312,7 +313,12 @@ export class SourceManager {
     const entry = this.get(meta.id);
     const runtime = this.runtime(meta.id);
     try {
-      await runtime.call("home", [{}, false], SELF_TEST_TIMEOUT);
+      const home = await runtime.call("home", [{}, false], SELF_TEST_TIMEOUT);
+      // 只跑 home 会放过「首页能看、点播就崩」的坏源：对有首页数据的源再冒烟一次 detail。
+      const first = (home && Array.isArray(home.list) ? home.list : [])[0] || (Array.isArray(home) ? home[0] : null);
+      if (first && (first.vod_id || first.id)) {
+        await runtime.call("detail", [String(first.vod_id || first.id)], SELF_TEST_TIMEOUT);
+      }
     } catch (error) {
       // 自检失败必须回滚：否则坏源会留在 data/sources，之后每次启动扫描都会带着它。
       if (previous !== null) {
@@ -345,6 +351,8 @@ export class SourceManager {
   async checkUpdate(id, { force = false } = {}) {
     const entry = this.get(id);
     if (!entry || entry.type !== "js") throw fail("NOT_JS", "不是 JS 源: " + id);
+    // 内置源随镜像发布，更新只会写进永不生效的 data/sources 副本；直接拒绝并指向「发版升级」。
+    if (entry.builtin) throw fail("PROTECTED", "内置源不能自动更新: " + id);
     const saved = this.stateFor(id) || {};
     const updateUrl = String(saved.url || entry.updateUrl || "").trim();
     if (!updateUrl) throw fail("BAD_INPUT", "该源没有配置上游地址");
@@ -416,7 +424,7 @@ export class SourceManager {
     const state = this.readState();
     const ids = [];
     for (const entry of this.registry.values()) {
-      if (entry.type !== "js") continue;
+      if (entry.type !== "js" || entry.builtin) continue;
       const saved = state[entry.id] || {};
       if (saved.autoUpdate === false) continue;
       if (!(saved.url || entry.updateUrl)) continue;

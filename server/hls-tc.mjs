@@ -16,6 +16,8 @@ const FFMPEG = process.env.FFMPEG_PATH || "ffmpeg";
 const MAX_CONCURRENT = Math.max(1, Number(process.env.TRANSCODE_MAX_CONCURRENT || 2) || 2);
 // 转码结果留 30 分钟：够同一集被反复起播/拖动，也不会把临时目录撑爆（容器里 /tmp 是 tmpfs）。
 const TTL_MS = Math.max(60 * 1000, Number(process.env.HLS_TC_TTL_MS || 30 * 60 * 1000) || 30 * 60 * 1000);
+// 单个转码任务的硬超时：ffmpeg 卡死时若不主动 kill，running 计数永不归零，最终把并发槽位占满导致转码永久不可用。
+const JOB_TIMEOUT_MS = Math.max(60 * 1000, Number(process.env.TRANSCODE_JOB_TIMEOUT_MS || 10 * 60 * 1000) || 10 * 60 * 1000);
 const ROOT = path.join(os.tmpdir(), "hg-hls");
 const SEGMENT_RE = /^seg_\d{5}\.m4s$/;
 const INIT_NAME = "init.mp4";
@@ -24,7 +26,7 @@ let running = 0;
 const STATS = { started: 0, done: 0, failed: 0, lastError: "", lastAt: 0 };
 
 export function hlsTranscodeStats() {
-  return { available: transcodeAvailable(), active: running, jobs: jobs.size, limit: MAX_CONCURRENT, ttlMs: TTL_MS, ...STATS };
+  return { available: transcodeAvailable(), active: running, jobs: jobs.size, limit: MAX_CONCURRENT, ttlMs: TTL_MS, jobTimeoutMs: JOB_TIMEOUT_MS, ...STATS };
 }
 
 function jobKey(epId, quality) {
@@ -35,8 +37,14 @@ function createJob({ provider, epId, quality, logger }) {
   const key = jobKey(epId, quality);
   const existing = jobs.get(key);
   if (existing) {
-    existing.touched = Date.now();
-    return existing;
+    // 失败任务不能永久缓存：否则同一集同档在 TTL(30min) 内永远命中失败结果、无法重试。
+    if (existing.state === "failed") {
+      jobs.delete(key);
+      fs.rmSync(existing.dir, { recursive: true, force: true });
+    } else {
+      existing.touched = Date.now();
+      return existing;
+    }
   }
   if (running >= MAX_CONCURRENT) throw fail("BUSY", "同时转码数已达上限（" + MAX_CONCURRENT + "），请稍后重试");
   const dir = path.join(ROOT, key);
@@ -115,7 +123,18 @@ async function runJob(job, { provider, logger }) {
     child.stderr.on("data", (chunk) => {
       stderr = (stderr + chunk.toString()).slice(-2000);
     });
+    // 硬超时：到时强杀 ffmpeg 并把任务标失败，finally 里 running 才能归零、槽位被释放。
+    const watchdog = setTimeout(() => {
+      job.state = "failed";
+      job.error = "转码超时（超过 " + Math.round(JOB_TIMEOUT_MS / 1000) + " 秒），已终止";
+      STATS.failed += 1;
+      STATS.lastError = job.error;
+      try { child.kill("SIGKILL"); } catch { /* 进程可能刚好自行退出 */ }
+    }, JOB_TIMEOUT_MS);
+    if (watchdog.unref) watchdog.unref();
+    const clearWatchdog = () => clearTimeout(watchdog);
     child.on("error", (error) => {
+      clearWatchdog();
       job.state = "failed";
       job.error = "转码进程启动失败：" + String((error && error.message) || error);
       STATS.failed += 1;
@@ -124,6 +143,7 @@ async function runJob(job, { provider, logger }) {
       resolve();
     });
     child.on("exit", (code) => {
+      clearWatchdog();
       dropStage(staged.dir);
       if (code === 0) {
         job.state = "done";
@@ -133,7 +153,7 @@ async function runJob(job, { provider, logger }) {
         if (logger) logger({ event: "hls_transcode_done", epId: job.epId, quality: job.quality });
       } else {
         job.state = "failed";
-        job.error = (stderr || "ffmpeg 退出码 " + code).slice(-400);
+        job.error = job.error || (stderr || "ffmpeg 退出码 " + code).slice(-400);
         STATS.failed += 1;
         STATS.lastError = job.error;
         if (logger) logger({ event: "hls_transcode_failed", epId: job.epId, quality: job.quality, error: job.error });

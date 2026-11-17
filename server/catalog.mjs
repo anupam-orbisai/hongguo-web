@@ -1,5 +1,6 @@
 import { fail } from "./errors.mjs";
 import { transcodeAvailable } from "./transcode.mjs";
+import { withTimeout, titleKey, titleScore } from "./util.mjs";
 
 // 统一目录层：把「内置红果解密源」与「糖葫芦 / CatPawOpen 风格 JS 源」归一成同一套接口。
 // 约定：所有对外方法都返回 { source, items|lines|episodes, ... }，字段缺失一律给空值而不是 undefined。
@@ -72,34 +73,6 @@ function toItems(list) {
 function listOf(result) {
   if (Array.isArray(result)) return result;
   return result && Array.isArray(result.list) ? result.list : [];
-}
-
-// 标题归一：去掉空白/标点/「短剧」「全集」这类营销后缀，避免同一部剧在不同源写法不同而匹配不上。
-function titleKey(value) {
-  return String(value || "")
-    .toLowerCase()
-    .replace(/[\s\u3000·・:：!！?？,，.。、\-—_~～|/\\()（）\[\]【】{}<>《》"'“”‘’#*+]/g, "")
-    .replace(/(短剧|全集|全\d+集|已完结|更新至\d+集?|第[一二三四五六七八九十百\d]+季)/g, "");
-}
-
-// 二元组 Dice 系数：中文短剧名多为 4–8 字，重合度比编辑距离更抗「多两个字/少一个字」的写法差异。
-function titleScore(a, b) {
-  const x = titleKey(a);
-  const y = titleKey(b);
-  if (!x || !y) return 0;
-  if (x === y) return 1;
-  if (x.length >= 2 && y.length >= 2 && (x.includes(y) || y.includes(x))) return 0.9;
-  if (x.length < 2 || y.length < 2) return 0;
-  const grams = (text) => {
-    const set = new Set();
-    for (let i = 0; i < text.length - 1; i += 1) set.add(text.slice(i, i + 2));
-    return set;
-  };
-  const gx = grams(x);
-  const gy = grams(y);
-  let hit = 0;
-  for (const gram of gx) if (gy.has(gram)) hit += 1;
-  return (2 * hit) / (gx.size + gy.size);
 }
 
 // ---------------- 关键词相关性 ----------------
@@ -226,15 +199,6 @@ export function classifyUrl(url) {
   if (/\.(mp4|m4v|mov)(\?|#|$)/i.test(value)) return "mp4";
   if (/\.(flv)(\?|#|$)/i.test(value)) return "flv";
   return "mp4";
-}
-
-function withTimeout(promise, ms, message) {
-  let timer;
-  const timeout = new Promise((_resolve, reject) => {
-    timer = setTimeout(() => reject(fail("TIMEOUT", message)), ms);
-    if (timer && timer.unref) timer.unref();
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 // 内置红果搜索：官网 JSON 搜索接口（/api/search/result）为主通道，
@@ -389,7 +353,8 @@ export function createCatalog({ provider, sources }) {
       kind: "js",
       classes,
       items,
-      page: 1,
+      page: pageNo,
+      // JS 源的 home 是推荐位，本身不分页；返回真实 pageNo 但不声称有下一页。
       hasMore: false,
       filters: (result && !Array.isArray(result) && result.filters) || {},
     };
