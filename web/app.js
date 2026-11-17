@@ -1461,8 +1461,10 @@
     pushRate(r);
   }
   function cycleRate(dir) {
-    var i = RATES.indexOf(state.rate); if (i < 0) i = 2;
-    i = Math.min(RATES.length - 1, Math.max(0, i + (dir || 1)));
+    var i = RATES.indexOf(state.rate);
+    // 倍速列表首尾相接：2× 再点回到 0.5×，0.5× 反向回到 2×；未知值先归一到 1×。
+    if (i < 0) { setRate(1); return; }
+    i = (i + (dir || 1) + RATES.length) % RATES.length;
     setRate(RATES[i]);
   }
 
