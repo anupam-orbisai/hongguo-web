@@ -2878,6 +2878,7 @@
       state.source = '__all';
       $('sourceSelect').value = '__all';
       closeMenus();
+      closeMobileMenu();
       loadHome();
       return Promise.resolve();
     }
@@ -2885,6 +2886,7 @@
       state.source = id;
       $('sourceSelect').value = id;
       closeMenus();
+      closeMobileMenu();
       // loadSources 失败不该变成 unhandled rejection；loadHome 自己会把错误显示出来。
       return loadSources().catch(function () {}).then(loadHome);
     });
@@ -3004,21 +3006,64 @@
     var panel = menu.querySelector('.menupanel'); if (panel) panel.classList.toggle('hidden', open);
     var btn = menu.querySelector('.menubtn'); if (btn) btn.setAttribute('aria-expanded', open ? 'false' : 'true');
   }
+  // ---- 手机端抽屉菜单（<=680px）----
+  // 四个分组在抽屉里直接全部展开，避免「外观/账号/历史/源」四个按钮挤在一行。
+  function mobileMenuIsOpen() {
+    var tb = document.querySelector('.topbar');
+    return !!(tb && tb.classList.contains('menu-open'));
+  }
+  function setMobileMenu(open) {
+    var tb = document.querySelector('.topbar');
+    if (!tb) return;
+    if (open) closeMenus();
+    tb.classList.toggle('menu-open', !!open);
+    document.body.classList.toggle('mm-open', !!open);
+    var btn = $('btnMobileMenu'); if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    var mask = $('mobileMenuMask'); if (mask) mask.classList.toggle('hidden', !open);
+  }
+  function closeMobileMenu() { setMobileMenu(false); }
   [['menuTheme', 'btnMenuTheme'], ['menuAccount', 'btnMenuAccount'], ['menuHistory', 'btnMenuHistory'], ['menuSource', 'btnMenuSource']].forEach(function (pair) {
     var menu = $(pair[0]), btn = $(pair[1]);
     if (!menu || !btn) return;
     btn.addEventListener('click', function (e) { e.stopPropagation(); toggleMenu(menu); });
-    // 点面板里的任意按钮后收起（源下拉框保持展开，方便连续切换）
+    // 点面板里的任意按钮后收起（源下拉框保持展开，方便连续切换；外观切换留在抽屉里方便对比）
     menu.querySelector('.menupanel').addEventListener('click', function (e) {
       if (e.target && e.target.tagName === 'SELECT') return;
-      if (e.target && e.target.classList && e.target.classList.contains('menuitem')) closeMenus();
+      if (e.target && e.target.classList && e.target.classList.contains('menuitem')) {
+        closeMenus();
+        if (!e.target.classList.contains('themechoice')) closeMobileMenu();
+      }
     });
   });
-  document.addEventListener('click', function (e) {
-    if (e.target && e.target.closest && e.target.closest('.tbmenu')) return;
-    closeMenus();
+  var mmBtn = $('btnMobileMenu');
+  if (mmBtn) mmBtn.addEventListener('click', function (e) {
+    e.stopPropagation();
+    setMobileMenu(!mobileMenuIsOpen());
   });
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeMenus(); });
+  var mmClose = $('btnMobileMenuClose');
+  if (mmClose) mmClose.addEventListener('click', function (e) { e.stopPropagation(); closeMobileMenu(); });
+  var mmMask = $('mobileMenuMask');
+  if (mmMask) mmMask.addEventListener('click', closeMobileMenu);
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (t && t.closest) {
+      if (t.closest('.tbmenu')) return; // 面板内部由各自处理器决定何时收起
+      if (mobileMenuIsOpen() && t.closest('#tbMenus')) return; // 抽屉标题/留白不触发关闭
+      if (t.closest('#btnMobileMenu')) return;
+    }
+    closeMenus();
+    closeMobileMenu();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { closeMenus(); closeMobileMenu(); }
+  });
+  // 转回桌面宽度时清掉抽屉状态，避免 body 滚动锁残留
+  var mqMobile = (typeof window !== 'undefined' && window.matchMedia) ? window.matchMedia('(max-width: 680px)') : null;
+  if (mqMobile) {
+    var onMobileMq = function () { if (!mqMobile.matches) closeMobileMenu(); };
+    if (mqMobile.addEventListener) mqMobile.addEventListener('change', onMobileMq);
+    else if (mqMobile.addListener) mqMobile.addListener(onMobileMq);
+  }
   $('btnImport').addEventListener('click', openImport);
   $('btnManage').addEventListener('click', openManage);
   $('btnManageClose').addEventListener('click', closeManage);

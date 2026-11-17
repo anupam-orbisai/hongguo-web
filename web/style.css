@@ -72,6 +72,9 @@ body{padding-bottom:40px}
   width:100%;max-width:1288px;margin:0 auto}
 /* 三组菜单：标题常显，括号里的功能收进下拉面板 */
 .tbmenus{display:flex;align-items:center;gap:6px;flex:0 0 auto;margin-left:auto}
+.mobilemenu-btn{display:none}
+.mmhead{display:none}
+.mobile-menu-mask{display:none}
 .tbmenu{position:relative}
 .menubtn{display:inline-flex;align-items:center;gap:5px;background:transparent;border:1px solid var(--line);
   color:var(--muted);padding:7px 11px;border-radius:10px;font-size:14px;cursor:pointer;white-space:nowrap}
@@ -297,14 +300,54 @@ input:focus,textarea:focus,.select:focus{border-color:var(--brand)}
   .tbmenus{order:2;margin-left:auto}
   .searchbox{order:3;flex:1 1 100%;max-width:none;width:100%}
 }
+@media (max-width:360px){
+  .mobilemenu-btn .mm-txt{display:none}
+}
 @media (max-width:680px){
   #main{padding:12px}
-  .topbar{padding:8px 10px}
-  .brand{font-size:15px}
-  .navbtn{padding:6px 10px;font-size:13px}
+  /* 手机端顶栏：品牌 + 「菜单」按钮一行，导航一行，搜索一行；四个分组菜单收进抽屉 */
+  .topbar{padding:8px 10px;gap:6px}
+  .tb-main{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px 10px;align-items:center}
+  .brand{order:1;min-width:0;font-size:15px;overflow:hidden;text-overflow:ellipsis}
+  .mobilemenu-btn{display:inline-flex;order:1;justify-self:end;align-items:center;gap:5px;
+    background:var(--panel2);border:1px solid var(--line);color:var(--text-strong);
+    padding:7px 11px;border-radius:10px;font-size:13px;cursor:pointer;white-space:nowrap}
+  .mobilemenu-btn .mm-ico{font-size:15px;line-height:1}
+  .mobilemenu-btn[aria-expanded="true"]{border-color:var(--brand);background:var(--panel)}
+  .nav{order:2;grid-column:1/-1;width:100%;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+  .searchbox{order:3;grid-column:1/-1;flex:1 1 100%;max-width:none;width:100%}
+  .navbtn{flex:none;width:100%;padding:7px 4px;font-size:13px;text-align:center}
   .menubtn{padding:6px 9px;font-size:13px}
   .menupanel{min-width:160px}
   .menupanel.wide{min-width:210px}
+  /* 默认收起四个分组，只留右上角「菜单」按钮 */
+  .tbmenus{display:none}
+  /* 抽屉：所有分组直接展开，一点即达，避免 4 个按钮挤在一行 */
+  .topbar.menu-open .tbmenus{display:flex;align-items:stretch;position:absolute;left:8px;right:8px;top:calc(100% + 6px);z-index:40;
+    flex-direction:column;gap:10px;margin:0;padding:10px;
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    box-shadow:0 20px 50px rgba(0,0,0,.55);max-height:calc(100vh - 150px);max-height:calc(100dvh - 150px);
+    overflow:auto;-webkit-overflow-scrolling:touch}
+  .topbar.menu-open .mmhead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0 2px 2px}
+  .topbar.menu-open .mmtitle{font-weight:700;font-size:15px;color:var(--text-strong)}
+  .topbar.menu-open .mmclose{width:32px;height:32px;border-radius:9px;border:1px solid var(--line);
+    background:var(--panel2);color:var(--text);font-size:14px;line-height:1;cursor:pointer}
+  .topbar.menu-open .tbmenu{width:100%}
+  .topbar.menu-open .tbmenu>.menubtn{display:none}
+  .topbar.menu-open .menupanel{display:grid !important;position:static;min-width:0;width:100%;
+    grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:0;padding:0;
+    background:transparent;border:0;box-shadow:none}
+  .topbar.menu-open .menupanel::before{content:attr(data-title);grid-column:1/-1;padding:0 2px 1px;
+    font-size:11.5px;color:var(--muted);letter-spacing:.5px}
+  .topbar.menu-open .menupanel.wide{grid-template-columns:1fr 1fr}
+  .topbar.menu-open .menupanel.wide .menulabel{display:none}
+  .topbar.menu-open .menupanel.wide .select{grid-column:1/-1;width:100%;margin:0}
+  .topbar.menu-open .menupanel.wide .menurow{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .topbar.menu-open .menuitem{justify-content:center;padding:10px 6px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:10px;font-size:13.5px;white-space:normal;text-align:center}
+  .topbar.menu-open .menurow .menuitem{flex:none}
+  .mobile-menu-mask{display:block;position:fixed;inset:0;z-index:19;background:rgba(0,0,0,.5)}
+  body.mm-open{overflow:hidden}
   .btn{padding:8px 12px;font-size:13px}
   input,textarea,.select{padding:8px 10px;font-size:13.5px}
   .grid{grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:9px}
@@ -327,6 +370,12 @@ input:focus,textarea:focus,.select:focus{border-color:var(--brand)}
   .histcover{width:40px;height:56px}
   .histacts{flex-direction:column;gap:6px}
   .toast{bottom:16px;max-width:92vw}
+}
+/* 超窄屏（≤370px）：抽屉改 2 列，避免「跟随设备」等长标签折行挤在一起 */
+@media (max-width:370px){
+  .topbar.menu-open .menupanel{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .topbar.menu-open .menupanel>.menuitem:nth-child(3):last-child{grid-column:1/-1}
+  .topbar.menu-open .menupanel.wide{grid-template-columns:1fr}
 }
 /* 移动端安全区（iPhone 刘海/底部手势条） */
 @supports(padding:max(0px)){

@@ -58,7 +58,7 @@ docker compose up -d        # 默认使用 ghcr.io/kid941005/hongguo-web:latest
 ```bash
 docker compose ps                        # STATUS 里应出现 running (healthy)
 docker compose logs -f                   # 实时日志，Ctrl+C 退出
-curl -s http://localhost:8787/health     # {"service":"hongguo-web","ok":true,"version":"0.14.4","active":"hongguo","sources":7,"accounts":true}
+curl -s http://localhost:8787/health     # {"service":"hongguo-web","ok":true,"version":"0.14.5","active":"hongguo","sources":7,"accounts":true}
 ```
 
 `healthy` 来自 compose 的 healthcheck：每 30 秒请求一次 `/health`，连续 3 次失败标记 unhealthy。发布后还可以跑七项冒烟（health / 源列表 / 首页 / 猜你喜欢 / 源自检取流 / 管理接口鉴权（admin-xff） / 播放监控）：
@@ -116,7 +116,7 @@ docker run -d --name hongguo-web \
   hongguo-web
 ```
 
-参数与 [compose.yaml](compose.yaml) 对应（示例只列常用项，未列出的变量取默认值，如源自动更新、播放监控）。直接跑发布镜像时把最后的 `hongguo-web` 换成 `ghcr.io/kid941005/hongguo-web:latest`，想固定版本可写 `:0.14.4`。
+参数与 [compose.yaml](compose.yaml) 对应（示例只列常用项，未列出的变量取默认值，如源自动更新、播放监控）。直接跑发布镜像时把最后的 `hongguo-web` 换成 `ghcr.io/kid941005/hongguo-web:latest`，想固定版本可写 `:0.14.5`。
 
 ### 1.7 升级、停止与卸载
 
@@ -139,6 +139,7 @@ docker compose down -v                        # 连数据卷一起删（会丢�
 
 最新发布见 [Releases](https://github.com/kid941005/hongguo-web/releases)；`main` 分支对应 `:edge`，正式版本打 `v*` 标签并同时推 `:版本号` 与 `:latest`。
 
+- **v0.14.5**：手机端顶栏重排：四个下拉收进右上角「菜单」抽屉，品牌+菜单、三等分导航、整行搜索三行布局，顶栏由 166px 降到 138px；抽屉内分组直出、42px 大按钮，≤370px 自动两列，桌面端保持原下拉。
 - **v0.14.4**：全项目审计修复发布：转码 ffmpeg 看门狗与任务硬超时、内置源禁止被自动更新覆盖、无 TOKEN + 反代（X-Forwarded-For）下管理写接口与 `/api/metrics` 鉴权加固、官方取址冷却与缓存上限、设备身份持久化、空 source 历史/收藏/追剧可删除、源安装补 detail 冒烟与 spider 元信息解析、牛牛源补封面限流、前端历史删除与换源等 W-03~W-09 修复。
 - **v0.14.3**：红果官方取址改用 **V5 签名**（SM3 + `x-helios` / `x-medusa` / `x-ss-stub`，`POST .../multi_video_model/player/v1`）。2026-11 上游弃用旧 `x-argus` / `x-ladon`，旧链路只回 200 空正文导致只能 360P；升级后恢复 720P（服务端转码）/ 1080P（HEVC）档位。一轮取址最多 4 发（V5 主 host → 备用 host → 旧 `video_tab` → 旧 POST），空正文 / 403 / 429 进入 90 秒全局冷却。
 - **v0.14.2**：带签名的 `video_tab` 取址 + 平台匿名一次性设备身份，恢复多档位取址。

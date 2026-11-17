@@ -39,10 +39,11 @@
       <input id="q" type="search" placeholder="搜索剧名…" autocomplete="off" />
       <button id="btnSearch" class="btn">搜索</button>
     </div>
-    <div class="tbmenus">
+    <div class="tbmenus" id="tbMenus">
+      <div class="mmhead"><span class="mmtitle">菜单</span><button id="btnMobileMenuClose" class="mmclose" type="button" aria-label="关闭菜单">✕</button></div>
       <div class="tbmenu" id="menuTheme">
         <button id="btnMenuTheme" class="menubtn" type="button" aria-haspopup="true" aria-expanded="false"><span id="themeIcon">🖥️</span>外观<span class="caret">▾</span></button>
-        <div class="menupanel hidden">
+        <div class="menupanel hidden" data-title="外观">
           <button class="menuitem themechoice menucheckbox" data-theme-mode="light" type="button"><span>☀️ 浅色</span></button>
           <button class="menuitem themechoice menucheckbox" data-theme-mode="dark" type="button"><span>🌙 深色</span></button>
           <button class="menuitem themechoice menucheckbox" data-theme-mode="auto" type="button"><span>🖥️ 跟随设备</span></button>
@@ -50,7 +51,7 @@
       </div>
       <div class="tbmenu" id="menuAccount">
         <button id="btnMenuAccount" class="menubtn" type="button" aria-haspopup="true" aria-expanded="false">账号<span class="caret">▾</span></button>
-        <div class="menupanel hidden">
+        <div class="menupanel hidden" data-title="账号">
           <button id="btnAccount" class="menuitem" type="button" title="登录（多设备同步）">👤 登录</button>
           <button id="btnRegister" class="menuitem" type="button" title="注册新账号">注册</button>
           <button id="btnLogout" class="menuitem hidden" type="button" title="退出登录">退出</button>
@@ -58,7 +59,7 @@
       </div>
       <div class="tbmenu" id="menuHistory">
         <button id="btnMenuHistory" class="menubtn" type="button" aria-haspopup="true" aria-expanded="false">历史<span id="menuHistDot" class="dot hidden"></span><span class="caret">▾</span></button>
-        <div class="menupanel hidden">
+        <div class="menupanel hidden" data-title="历史">
           <button id="btnHistory" class="menuitem" type="button" title="在看：观看历史与续播">🕘 在看</button>
           <button id="btnFavs" class="menuitem" type="button" title="我的收藏">☆ 收藏</button>
           <button id="btnFollows" class="menuitem" type="button" title="追剧提醒">🔔 追剧<span id="followBadge" class="badge hidden"></span></button>
@@ -66,7 +67,7 @@
       </div>
       <div class="tbmenu" id="menuSource">
         <button id="btnMenuSource" class="menubtn" type="button" aria-haspopup="true" aria-expanded="false">源<span class="caret">▾</span></button>
-        <div class="menupanel wide hidden">
+        <div class="menupanel wide hidden" data-title="数据源">
           <label class="menulabel" for="sourceSelect">目前数据源</label>
           <select id="sourceSelect" class="select" title="目前使用的数据源（点击切换）"></select>
           <div class="menurow">
@@ -76,8 +77,10 @@
         </div>
       </div>
     </div>
+    <button id="btnMobileMenu" class="mobilemenu-btn" type="button" aria-label="打开菜单" aria-controls="tbMenus" aria-expanded="false"><span class="mm-ico">☰</span><span class="mm-txt">菜单</span></button>
   </div>
 </header>
+<div id="mobileMenuMask" class="mobile-menu-mask hidden"></div>
 
 <main id="main">
   <div id="content">
