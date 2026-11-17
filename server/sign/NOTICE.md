@@ -11,3 +11,19 @@
 
 用途：仅向官方播放接口取回**用户本机可播放的清晰度列表**（含 1080P），
 服务端解密后按 Range 转发给浏览器，不存储、不再分发。
+
+
+---
+
+## V5 播放签名（v5.cjs）
+
+`v5.cjs` 是 2026-11 上游切换后的播放接口签名实现（SM3 + HashF13 + CarrierV5，
+`x-helios` / `x-medusa` / `x-ss-stub` 请求头，`POST .../multi_video_model/player/v1`）。
+
+- 来源：`N3urda/hongguoTV`（commit 18c37c2）的 `Signer.kt` / `AesV3.kt` / `V5Constants.kt`，
+  原始出处 `drpys` commit 22261ad；经 `jackotom/hongguo-drama` 7.5 的 `playback-v5.js` 整理为 Node 实现。
+- 许可：GPL-3.0-only（与 `server/vendor/hongguo.cjs` 一致）。
+- 本地改动：仅调整 `require('./sm3')` → `require('./sm3.cjs')`；算法常量与位运算顺序未改动。
+- 校验：`server/selftest.mjs` 的「V5 播放签名」段（URL/分支 ticket/x-ss-stub 定值 + 形状断言）。
+
+用途：仅向官方播放接口取回用户本机可播放的清晰度列表，服务端解密后按 Range 转发，不存储、不再分发。

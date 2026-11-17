@@ -3,6 +3,7 @@ import axios from "axios";
 import { gzipSync } from "node:zlib";
 import { randomBytes, createHash } from "node:crypto";
 import argus from "./sign/argus.cjs";
+import v5 from "./sign/v5.cjs";
 import { fileURLToPath } from "node:url";
 import { createDeviceStore } from "./device.mjs";
 
@@ -20,6 +21,26 @@ const MODEL_HOST = "https://api5-normal-sinfonlineb.fqnovel.com";
 const MODEL_PATH = "/novel/player/multi_video_model/v1/";
 const TAB_HOST = "https://api5-normal-sinfonlineb.fqnovel.com";
 const TAB_PATH = "/reading/bookapi/video_tab/multi_video_model/v1/";
+
+// ── V5 签名取址（2026-11-16 上游启用；旧 x-argus/x-ladon 已被判伪造，回 200 空正文）──
+// 参考 jackotom/hongguo-drama 7.5 与 N3urda/hongguoTV / drpys：POST player/v1，
+// 每发用 SM3 + x-helios/x-medusa/x-ss-stub 签名，设备档改用 PGT-AN10 / Android 12 / 7.4.3.32。
+const PLAYER_HOST = "https://api5-normal-sinfonlineb.fqnovel.com";
+const PLAYER_PATH = "/novel/player/multi_video_model/player/v1";
+const V5_DEVICE = {
+  aid: "8662",
+  app_name: "novelread",
+  version_code: "74332",
+  version_name: "7.4.3.32",
+  channel: "vivo_8662_64",
+  device_platform: "android",
+  device_type: "PGT-AN10",
+  os_version: "12",
+  update_version_code: "74332",
+};
+const V5_UA =
+  "com.phoenix.read/73932 (Linux; U; Android 12; zh_CN_#Hans; PGT-AN10; Build/V417IR;tt-ok/3.12.13.20)";
+const signPlaybackV5 = v5.signPlaybackV5;
 
 // 空响应后的全局冷却：这段时间内不再打上游，直接让调用方回落 360P 兼容通道。
 const EMPTY_COOLDOWN = 90 * 1000;
@@ -298,10 +319,84 @@ export function createOfficial({ register, deriveContentKey, devices } = {}) {
     return model;
   }
 
+  // player/v1 的响应结构：data['1004'][epId].video_model（或 data.video_model_data[epId]）。
+  function parsePlayerModel(text, epId) {
+    const root = JSON.parse(text);
+    if (!root || typeof root !== "object") throw new Error("player 响应不是对象");
+    const code = Number(root.code != null ? root.code : root.Code != null ? root.Code : 0);
+    if (code !== 0) throw new Error("player 返回错误码 " + code);
+    const data = root.data || {};
+    const rows = data["1004"] || data.video_model_data || data;
+    const entry = rows && typeof rows === "object" ? rows[String(epId)] : null;
+    if (!entry || typeof entry !== "object") throw new Error("player 响应缺少本集条目");
+    let model = entry.video_model;
+    if (typeof model === "string") model = JSON.parse(model);
+    if (!model || typeof model !== "object" || Array.isArray(model)) throw new Error("player 没有 video_model");
+    if (!Array.isArray(model.video_list) || !model.video_list.length) throw new Error("player 没有 video_list");
+    return model;
+  }
+
   // ── 签名请求（主路径）：query / header / body 与参考实现逐字段一致 ──────────────
   // legacy=false → 签名 GET video_tab（73932 播放器档）；legacy=true → 签名 POST multi_video_model（74332）。
   const signedRequest = (args) => signPlaybackRequest(args);
 
+
+  // V5 签名取址：POST player/v1，body 为 gzip(payload)，签名头覆盖 query+body。
+  async function v5Fetch({ epId, alternate = false, options = {} }) {
+    const identity = await getPlayIdentity(Boolean(options.freshIdentity));
+    const payload = JSON.stringify({
+      biz_param: { ...BIZ_PARAM, disable_video_relate_book: false },
+      mixed_video_id_map: { 1004: [String(epId)] },
+      dr_scene: "player",
+    });
+    const body = gzipSync(Buffer.from(payload, "utf8"));
+    const base = alternate ? PLAYER_HOST.replace("sinfonlineb.", "sinfonlinea.") : PLAYER_HOST;
+    const signed = signPlaybackV5({
+      base: base + PLAYER_PATH,
+      values: {
+        ...V5_DEVICE,
+        iid: String(identity.iid),
+        cdid: String(identity.cdid || ""),
+        device_id: String(identity.device_id),
+      },
+      body,
+      now: Date.now(),
+    });
+    stats.requests += 1;
+    stats.signed += 1;
+    const resp = await axios.request({
+      url: signed.url,
+      method: "post",
+      headers: {
+        ...signed.headers,
+        "User-Agent": V5_UA,
+        Accept: "application/json",
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Encoding": "gzip",
+      },
+      data: body,
+      timeout: MODEL_TIMEOUT,
+      responseType: "text",
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+      transformRequest: [(data) => data],
+      validateStatus: () => true,
+    });
+    const label = alternate ? "player(v5-alt)" : "player(v5)";
+    if (resp.status === 403 || resp.status === 429) {
+      stats.empty += 1;
+      quietUntil = Date.now() + EMPTY_COOLDOWN;
+      throw new Error(label + " HTTP " + resp.status + "（风控）");
+    }
+    const text = typeof resp.data === "string" ? resp.data : JSON.stringify(resp.data || {});
+    if (resp.status !== 200) throw new Error(label + " HTTP " + resp.status);
+    if (!text.trim()) {
+      stats.empty += 1;
+      quietUntil = Date.now() + EMPTY_COOLDOWN;
+      throw new Error(label + " 空响应（上游限流）");
+    }
+    return parsePlayerModel(text, epId);
+  }
 
   async function signedFetch({ epId, legacy, options = {} }) {
     const identity = await getPlayIdentity(Boolean(options.freshIdentity));
@@ -445,37 +540,56 @@ export function createOfficial({ register, deriveContentKey, devices } = {}) {
   async function runFetch(key, options = {}) {
     if (Date.now() < quietUntil) throw new Error("官方通道冷却中（上次空响应，稍后自动恢复）");
     const unsigned = String(process.env.HONGGUO_OFFICIAL_UNSIGNED || "") === "1";
-    const attempts = unsigned
-      ? [
-          () => requestTabUnsigned(key),
-          () => requestTabUnsigned(key, { freshIdentity: true }),
-          () => requestModelUnsigned(key, { freshIdentity: true }),
-        ]
-      : [
-          () => signedFetch({ epId: key, legacy: false, options }),
-          // 只有「空正文」才值得换旧 POST 链路再试；其它错误(网络/HTTP 5xx)换了也是白打。
-          () => signedFetch({ epId: key, legacy: true, options: { ...options, freshIdentity: true } }),
-        ];
     let lastError = null;
-    for (const attempt of attempts) {
-      try {
-        const model = await attempt();
-        cache.set(key, { time: Date.now(), value: model });
-        stats.ok += 1;
-        return model;
-      } catch (error) {
-        lastError = error;
-        // 进入冷却说明出口 IP 已被限流，再换身份/换接口都是白打。
-        if (Date.now() < quietUntil) break;
-        // 网络类错误没必要换身份重试，直接抛给上层回落 360P。
-        if (!/空响应|错误码|缺少条目|video_list/.test(String((error && error.message) || error))) break;
+    // 可重试判据：空正文 / 业务错误码 / 缺条目。网络错误、403/429 直接放弃，别白打上游。
+    const retriable = /空响应|错误码|缺少条目|没有 video_model|video_list/;
+    if (unsigned) {
+      const attempts = [
+        () => requestTabUnsigned(key),
+        () => requestTabUnsigned(key, { freshIdentity: true }),
+        () => requestModelUnsigned(key, { freshIdentity: true }),
+      ];
+      for (const attempt of attempts) {
+        try {
+          const model = await attempt();
+          cache.set(key, { time: Date.now(), value: model });
+          stats.ok += 1;
+          return model;
+        } catch (error) {
+          lastError = error;
+          if (Date.now() < quietUntil) break;
+          if (!retriable.test(String((error && error.message) || error))) break;
+        }
+      }
+    } else {
+      // V5 主链路：主 host → 备用 host（同一身份）→ 旧 video_tab → 旧 POST。
+      // 上游 2026-11-16 起只认 V5 签名，旧 x-argus 链路仅作最后兜底。
+      const chain = [
+        () => v5Fetch({ epId: key, options }),
+        () => v5Fetch({ epId: key, alternate: true, options }),
+        () => signedFetch({ epId: key, legacy: false, options: { ...options, freshIdentity: true } }),
+        () => signedFetch({ epId: key, legacy: true, options: { ...options, freshIdentity: true } }),
+      ];
+      for (let idx = 0; idx < chain.length; idx += 1) {
+        try {
+          const model = await chain[idx]();
+          quietUntil = 0; // 成功即解除冷却（上一发空正文可能只是单发失败）
+          cache.set(key, { time: Date.now(), value: model });
+          stats.ok += 1;
+          return model;
+        } catch (error) {
+          lastError = error;
+          const message = String((error && error.message) || error);
+          if (/风控|HTTP 403|HTTP 429/.test(message)) break;
+          if (!retriable.test(message)) break;
+          if (Date.now() < quietUntil && idx >= chain.length - 1) break;
+        }
       }
     }
     cache.set(key, { time: Date.now(), error: lastError });
     markError(lastError);
     throw lastError;
   }
-
   // 红果官方档位的编码：bytevc1 = H.265/HEVC，bytevc2 = H.266/VVC。
   // VVC 目前没有任何浏览器能解，必须单独标出来，否则会被误当成 HEVC 去试。
   function codecOf(raw) {

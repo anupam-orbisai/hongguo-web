@@ -318,6 +318,53 @@ for (const vector of VECTORS.cases) {
   eq(built.headers["x-argus"].length > 100, true, tag + " x-argus 非空");
 }
 
+// ------------------------------------------------ V5 播放签名（2026-11 上游切换）
+// 上游 2026-11-16 起只认 SM3/HashF13 的 V5 签名（x-helios/x-medusa/x-ss-stub），
+// 旧的 x-argus/x-ladon 会被判伪造并回 200 空正文。这里钉住 V5 的确定性输出。
+
+section("V5 播放签名（signPlaybackV5）");
+
+const { signPlaybackV5 } = require("./sign/v5.cjs");
+const V5_BASE = "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/player/v1";
+const V5_VALUES = {
+  aid: "8662", app_name: "novelread", version_code: "74332", version_name: "7.4.3.32",
+  channel: "vivo_8662_64", device_platform: "android", device_type: "PGT-AN10",
+  os_version: "12", update_version_code: "74332",
+  iid: "8000000000000000", cdid: "123e4567-e89b-42d3-a456-426614174000", device_id: "7000000000000000",
+};
+const v5Payload = JSON.stringify({
+  biz_param: { detail_page_version: 0, device_level: 3 },
+  mixed_video_id_map: { 1004: ["7706514645208534041"] },
+  dr_scene: "player",
+});
+const v5Body = zlib.gzipSync(Buffer.from(v5Payload));
+const v5Now = 1762600000000;
+const v5Once = signPlaybackV5({ base: V5_BASE, values: V5_VALUES, body: v5Body, now: v5Now });
+const v5Twice = signPlaybackV5({ base: V5_BASE, values: V5_VALUES, body: v5Body, now: v5Now });
+const V5_GOLDEN_URL =
+  V5_BASE +
+  "?aid=8662&app_name=novelread&version_code=74332&version_name=7.4.3.32&channel=vivo_8662_64" +
+  "&device_platform=android&device_type=PGT-AN10&os_version=12&update_version_code=74332" +
+  "&iid=8000000000000000&cdid=123e4567-e89b-42d3-a456-426614174000&device_id=7000000000000000" +
+  "&_rticket=1762600000023";
+eq(v5Once.url, V5_GOLDEN_URL, "V5 黄金向量：固定入参的 URL（含分支 ticket）与固定值一致");
+eq(v5Once.headers["x-khronos"], "1762600000", "V5 x-khronos = 秒级时间戳");
+eq(v5Once.headers["x-ss-req-ticket"], "1762600000023", "V5 x-ss-req-ticket = 选中的分支 ticket");
+eq(v5Once.headers["x-ss-stub"], "C151B22DF8D597ECA7D9AB268768111B", "V5 x-ss-stub = 请求体 gzip 字节 md5 的大写 hex");
+eq(v5Once.headers["x-ss-stub"], crypto.createHash("md5").update(v5Body).digest("hex").toUpperCase(), "V5 x-ss-stub 与实际请求体自洽");
+eq(typeof v5Once.headers["x-helios"] === "string" && v5Once.headers["x-helios"].length > 0, true, "V5 x-helios 非空");
+// x-helios / x-medusa 内部带随机 nonce（模拟真实客户端），只断言形状与长度。
+eq(v5Once.headers["x-helios"].length > 20, true, "V5 x-helios 非空且长度合理");
+eq(v5Once.headers["x-medusa"].length > 100, true, "V5 x-medusa 非空且长度合理");
+eq(v5Twice.url, v5Once.url, "V5 同入参 URL 确定一致（分支 ticket 由 body/query 决定）");
+let v5Rejected = false;
+try {
+  signPlaybackV5({ base: V5_BASE, values: { ...V5_VALUES, cdid: "" }, body: v5Body, now: v5Now });
+} catch {
+  v5Rejected = true;
+}
+eq(v5Rejected, true, "V5 缺少 cdid 时拒绝签名");
+
 // ------------------------------------------------------- 播放地址拆分/分类
 
 section("splitPlayUrl（线路 / 分集拆分）");
