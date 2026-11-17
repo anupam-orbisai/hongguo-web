@@ -8,7 +8,7 @@
 
 - 前端：原生 JS 单页（深色 / 浅色 / 跟随设备三档主题、响应式），HLS 用内置 hls.js，MP4 直连
 - 后端：Node.js（ESM），账号数据存 SQLite（`node:sqlite`）
-- 容器：`node:22-bookworm-slim`，非 root、`read_only` + `cap_drop: ALL` 加固，镜像多架构（amd64 / arm64）
+- 容器：`node:22-trixie-slim`（Debian 13，自带 ffmpeg 7.1+，用于 VVC 转码），非 root、`read_only` + `cap_drop: ALL` 加固，镜像多架构（amd64 / arm64）
 
 ## 功能特性
 
@@ -58,7 +58,7 @@ docker compose up -d        # 默认使用 ghcr.io/kid941005/hongguo-web:latest
 ```bash
 docker compose ps                        # STATUS 里应出现 running (healthy)
 docker compose logs -f                   # 实时日志，Ctrl+C 退出
-curl -s http://localhost:8787/health     # {"service":"hongguo-web","ok":true,"version":"0.14.0","active":"hongguo","sources":7,"accounts":true}
+curl -s http://localhost:8787/health     # {"service":"hongguo-web","ok":true,"version":"0.14.3","active":"hongguo","sources":7,"accounts":true}
 ```
 
 `healthy` 来自 compose 的 healthcheck：每 30 秒请求一次 `/health`，连续 3 次失败标记 unhealthy。发布后还可以跑六项冒烟（health / 源列表 / 首页 / 猜你喜欢 / 源自检取流 / 播放监控）：
@@ -116,7 +116,7 @@ docker run -d --name hongguo-web \
   hongguo-web
 ```
 
-参数与 [compose.yaml](compose.yaml) 对应（示例只列常用项，未列出的变量取默认值，如源自动更新、播放监控）。直接跑发布镜像时把最后的 `hongguo-web` 换成 `ghcr.io/kid941005/hongguo-web:latest`，想固定版本可写 `:0.14.0`。
+参数与 [compose.yaml](compose.yaml) 对应（示例只列常用项，未列出的变量取默认值，如源自动更新、播放监控）。直接跑发布镜像时把最后的 `hongguo-web` 换成 `ghcr.io/kid941005/hongguo-web:latest`，想固定版本可写 `:0.14.3`。
 
 ### 1.7 升级、停止与卸载
 
@@ -134,6 +134,14 @@ docker compose down -v                        # 连数据卷一起删（会丢�
 - 打 `v*` 标签 → 同时推 `:版本号` 与 `:latest`
 - 多架构 `linux/amd64` + `linux/arm64`，层缓存走 GHA；构建前先跑离线自测
 - 构建记录见 Actions 页，镜像在 GitHub Packages；包已设为 Public，可直接 `docker pull`（拉取限流时先 `docker login ghcr.io`）
+
+### 1.9 版本说明
+
+最新发布见 [Releases](https://github.com/kid941005/hongguo-web/releases)；`main` 分支对应 `:edge`，正式版本打 `v*` 标签并同时推 `:版本号` 与 `:latest`。
+
+- **v0.14.3**：红果官方取址改用 **V5 签名**（SM3 + `x-helios` / `x-medusa` / `x-ss-stub`，`POST .../multi_video_model/player/v1`）。2026-11 上游弃用旧 `x-argus` / `x-ladon`，旧链路只回 200 空正文导致只能 360P；升级后恢复 720P（服务端转码）/ 1080P（HEVC）档位。一轮取址最多 4 发（V5 主 host → 备用 host → 旧 `video_tab` → 旧 POST），空正文 / 403 / 429 进入 90 秒全局冷却。
+- **v0.14.2**：带签名的 `video_tab` 取址 + 平台匿名一次性设备身份，恢复多档位取址。
+- **v0.14.1**：镜像换 `node:22-trixie-slim` + ffmpeg 7.1，新增 VVC → H.264 服务端转码（HLS fMP4、EVENT 清单可边转边播），播放器增加高清优先与逐级降级。
 
 ## 2. 环境变量
 
@@ -384,7 +392,7 @@ hongguo-web/
 │  ├─ db.mjs / users.mjs            # SQLite（node:sqlite）与 UserStore
 │  ├─ http.mjs                      # 路由表、鉴权、访问日志
 │  ├─ selftest.mjs                  # 离线自测：密钥派生 / 分块解密 / 签名 / 解析 / 熔断 / 错误码
-│  ├─ sign/                         # argus.cjs、sm3.cjs（播放签名，见 NOTICE.md）
+│  ├─ sign/                         # v5.cjs、sm3.cjs、argus.cjs（播放签名，见 NOTICE.md）
 │  ├─ scripts/smoke.mjs             # 发布冒烟：health / 源 / 首页 / 猜你喜欢 / 取流 / 监控
 │  └─ sources/
 │     ├─ runtime.mjs                # JS 源运行时装配（每源独立 worker_threads）
@@ -400,7 +408,7 @@ hongguo-web/
 改密钥派生、分块解密、播放签名这类「改一行就可能让所有播放失效」的代码前后，先跑一遍离线自测（不联网、不读 `data/`）：
 
 ```bash
-docker run --rm -v "$PWD":/w -w /w node:22-bookworm-slim sh -c \
+docker run --rm -v "$PWD":/w -w /w node:22-trixie-slim sh -c \
   "npm --prefix server install --omit=dev --no-audit --no-fund && node server/selftest.mjs"
 ```
 
