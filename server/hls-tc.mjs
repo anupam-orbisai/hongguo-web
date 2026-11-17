@@ -109,43 +109,18 @@ async function runJob(job, { provider, logger }) {
   ]);
   await new Promise((resolve) => {
     let stderr = "";
-    let child;
-    try {
-      child = spawn(FFMPEG, args, { cwd: job.dir, stdio: ["ignore", "ignore", "pipe"] });
-    } catch (error) {
-      job.state = "failed";
-      job.error = "转码进程启动失败：" + String((error && error.message) || error);
-      STATS.failed += 1;
-      STATS.lastError = job.error;
-      dropStage(staged.dir);
-      return resolve();
-    }
-    child.stderr.on("data", (chunk) => {
-      stderr = (stderr + chunk.toString()).slice(-2000);
-    });
-    // 硬超时：到时强杀 ffmpeg 并把任务标失败，finally 里 running 才能归零、槽位被释放。
-    const watchdog = setTimeout(() => {
-      job.state = "failed";
-      job.error = "转码超时（超过 " + Math.round(JOB_TIMEOUT_MS / 1000) + " 秒），已终止";
-      STATS.failed += 1;
-      STATS.lastError = job.error;
-      try { child.kill("SIGKILL"); } catch { /* 进程可能刚好自行退出 */ }
-    }, JOB_TIMEOUT_MS);
-    if (watchdog.unref) watchdog.unref();
-    const clearWatchdog = () => clearTimeout(watchdog);
-    child.on("error", (error) => {
-      clearWatchdog();
-      job.state = "failed";
-      job.error = "转码进程启动失败：" + String((error && error.message) || error);
-      STATS.failed += 1;
-      STATS.lastError = job.error;
-      dropStage(staged.dir);
-      resolve();
-    });
-    child.on("exit", (code) => {
+    let child = null;
+    let watchdog = null;
+    let settled = false;
+    let timedOut = false;
+    const clearWatchdog = () => { if (watchdog) clearTimeout(watchdog); };
+    // 所有退出路径（超时/error/exit）统一走这里，保证 failed/done 只计一次。
+    const finish = (ok, message) => {
+      if (settled) return;
+      settled = true;
       clearWatchdog();
       dropStage(staged.dir);
-      if (code === 0) {
+      if (ok) {
         job.state = "done";
         job.error = "";
         STATS.done += 1;
@@ -153,12 +128,37 @@ async function runJob(job, { provider, logger }) {
         if (logger) logger({ event: "hls_transcode_done", epId: job.epId, quality: job.quality });
       } else {
         job.state = "failed";
-        job.error = job.error || (stderr || "ffmpeg 退出码 " + code).slice(-400);
+        job.error = String(message || "转码失败");
         STATS.failed += 1;
         STATS.lastError = job.error;
+        STATS.lastAt = Date.now();
         if (logger) logger({ event: "hls_transcode_failed", epId: job.epId, quality: job.quality, error: job.error });
       }
       resolve();
+    };
+    try {
+      child = spawn(FFMPEG, args, { cwd: job.dir, stdio: ["ignore", "ignore", "pipe"] });
+    } catch (error) {
+      finish(false, "转码进程启动失败：" + String((error && error.message) || error));
+      return;
+    }
+    child.stderr.on("data", (chunk) => {
+      stderr = (stderr + chunk.toString()).slice(-2000);
+    });
+    // 硬超时：到时强杀 ffmpeg 并把任务标失败，finally 里 running 才能归零、槽位被释放。
+    watchdog = setTimeout(() => {
+      timedOut = true;
+      finish(false, "转码超时（超过 " + Math.round(JOB_TIMEOUT_MS / 1000) + " 秒），已终止");
+      try { child.kill("SIGKILL"); } catch { /* 进程可能刚好自行退出 */ }
+    }, JOB_TIMEOUT_MS);
+    if (watchdog.unref) watchdog.unref();
+    child.on("error", (error) => {
+      finish(false, "转码进程启动失败：" + String((error && error.message) || error));
+    });
+    child.on("exit", (code) => {
+      if (timedOut) return finish(false, job.error);
+      if (code === 0) return finish(true);
+      finish(false, (stderr || "ffmpeg 退出码 " + code).slice(-400));
     });
   });
 }

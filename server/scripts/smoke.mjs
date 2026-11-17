@@ -77,6 +77,16 @@ await check("source-health", async () => {
   throw new Error(lastError);
 });
 
+await check("admin-xff", async () => {
+  // 未设置 TOKEN 时管理接口只对内网开放；带 X-Forwarded-For 必须按外网拒绝。
+  const plain = await fetch(BASE + "/api/metrics");
+  if (plain.status === 401) return "skip: TOKEN 已配置";
+  const res = await fetch(BASE + "/api/metrics", { headers: { "x-forwarded-for": "203.0.113.9" } });
+  const text = await res.text();
+  if (res.status !== 403) throw new Error("带 X-Forwarded-For 期望 403，实际 " + res.status + " " + text.slice(0, 120));
+  return "403 as expected";
+});
+
 await check("alerts", async () => {
   const body = await getJson("/api/alerts");
   if (!body || body.enabled !== true) throw new Error("播放监控未启用（PLAYBACK_MONITOR=0？）");

@@ -462,9 +462,12 @@ export function createServer({ provider, sources, catalog, users = null, monitor
       const isWrite = !["GET", "HEAD"].includes(req.method) && isAdminWrite(url.pathname);
       const isSensitiveRead = url.pathname === "/api/metrics";
       if (isWrite || isSensitiveRead) {
-        let ip = clientIp(req);
-        if (!TRUST_PROXY && req.headers["x-forwarded-for"]) ip = "";
-        if (!isPrivateHost(ip)) {
+        // 未声明信任代理却带 X-Forwarded-For：无法判定真实来源，直接按外网处理。
+        // 注意不能把 ip 置空再交给 isPrivateHost —— 空主机名会被判为内网，等于放行。
+        if (!TRUST_PROXY && req.headers["x-forwarded-for"]) {
+          throw fail("PROTECTED", "对外网开放的管理接口需要先设置 TOKEN 环境变量");
+        }
+        if (!isPrivateHost(clientIp(req))) {
           throw fail("PROTECTED", "对外网开放的管理接口需要先设置 TOKEN 环境变量");
         }
       }
